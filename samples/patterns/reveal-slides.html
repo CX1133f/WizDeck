@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>三分钟读懂光合作用</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0f1419; }
+  .slides { width: 1920px; margin: 0 auto; }
+  .slide {
+    width: 1920px; height: 1080px; position: relative; overflow: hidden;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #ffffff; color: #14202e;
+  }
+  .cover { background: #0d2b1f; color: #eafaf1; }
+  .cover h1 { position: absolute; left: 120px; top: 400px; margin: 0; font-size: 118px; font-weight: 900; }
+  .cover .tag { position: absolute; left: 124px; top: 330px; font-size: 28px; letter-spacing: 12px; color: #6ee7a8; }
+  .cover .line { position: absolute; left: 124px; top: 560px; width: 180px; height: 8px; background: #6ee7a8; }
+  .cover .sub { position: absolute; left: 124px; top: 610px; font-size: 34px; color: #a8c9b8; }
+  .kicker { position: absolute; left: 120px; top: 100px; font-size: 24px; letter-spacing: 8px; color: #0d9488; font-weight: 700; }
+  h2 { position: absolute; left: 120px; top: 150px; margin: 0; font-size: 76px; font-weight: 900; }
+  .cols { position: absolute; left: 120px; top: 340px; right: 120px; display: flex; gap: 48px; }
+  .col { flex: 1; background: #f2fbf7; border-radius: 18px; padding: 42px; border-left: 8px solid #0d9488; }
+  .col h3 { margin: 0 0 18px; font-size: 40px; }
+  .col p { margin: 0; font-size: 27px; line-height: 1.8; color: #45596b; }
+  .formula {
+    position: absolute; left: 120px; top: 420px; right: 120px; text-align: center;
+    font-size: 60px; font-weight: 800; color: #0d2b1f; letter-spacing: 2px;
+  }
+  .formula small { display: block; font-size: 26px; font-weight: 400; color: #64748b; margin-top: 26px; letter-spacing: 0; }
+  .pageno { position: absolute; right: 120px; bottom: 60px; font-size: 24px; color: #9fb3c8; }
+</style>
+</head>
+<body>
+  <div class="slides">
+
+    <section class="slide cover">
+      <div class="tag">生物学 · 必修一</div>
+      <h1>光合作用</h1>
+      <div class="line"></div>
+      <div class="sub">光能如何变成有机物里的化学能</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">反应总览</div>
+      <h2>一句话说清整个过程</h2>
+      <div class="formula">
+        6CO₂ + 6H₂O —光能/叶绿体→ C₆H₁₂O₆ + 6O₂
+        <small>二氧化碳和水在光能驱动下合成葡萄糖，同时放出氧气</small>
+      </div>
+      <div class="pageno">02 / 04</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">两个阶段</div>
+      <h2>光反应与暗反应</h2>
+      <div class="cols">
+        <div class="col">
+          <h3>光反应</h3>
+          <p>发生在类囊体薄膜上。水被分解产生氧气，同时生成 ATP 与 NADPH，为下一阶段提供能量与还原剂。</p>
+        </div>
+        <div class="col">
+          <h3>暗反应</h3>
+          <p>发生在叶绿体基质中。利用 ATP 与 NADPH 固定二氧化碳，经卡尔文循环生成葡萄糖。</p>
+        </div>
+      </div>
+      <div class="pageno">03 / 04</div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">小结</div>
+      <h2>记住这三个关键词</h2>
+      <div class="cols">
+        <div class="col"><h3>光能</h3><p>唯一的能量来源。</p></div>
+        <div class="col"><h3>叶绿体</h3><p>反应的场所。</p></div>
+        <div class="col"><h3>有机物</h3><p>最终的产物。</p></div>
+      </div>
+      <div class="pageno">04 / 04</div>
+    </section>
+
+  </div>
+</body>
+</html>

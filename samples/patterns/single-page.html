@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>单页 · 一份没有分页标记的说明页</title>
+<style>
+  body {
+    margin: 0;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef2f7;
+    color: #1b2430;
+  }
+  /* 故意不写任何 .slide / <section> 之类的分页提示，检验兜底分支 */
+  .sheet {
+    width: 1920px;
+    min-height: 1080px;
+    background: #ffffff;
+    padding: 110px 120px;
+    box-sizing: border-box;
+  }
+  .sheet h1 { margin: 0 0 28px; font-size: 92px; font-weight: 900; letter-spacing: 2px; }
+  .sheet .lead { font-size: 34px; line-height: 1.8; color: #46586c; max-width: 1300px; }
+  .rule { width: 200px; height: 8px; background: #2563eb; margin: 46px 0 54px; }
+  .grid { display: flex; gap: 40px; }
+  .cell {
+    flex: 1; background: #f6f8fb; border-radius: 16px; padding: 36px;
+    border-top: 6px solid #2563eb;
+  }
+  .cell .n { font-size: 56px; font-weight: 900; color: #c7d4e4; }
+  .cell h3 { margin: 12px 0 14px; font-size: 36px; }
+  .cell p { margin: 0; font-size: 26px; line-height: 1.75; color: #5a6b7e; }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <h1>课堂说明</h1>
+    <div class="lead">
+      这是一份没有显式分页标记的单页文档。引擎应当识别到没有可靠的分页结构，
+      把它整体当作一页，并在界面上提示分页置信度较低，而不是错误地切成很多碎片。
+    </div>
+    <div class="rule"></div>
+    <div class="grid">
+      <div class="cell"><div class="n">01</div><h3>先阅读</h3><p>通读一遍全文，标出不理解的地方。</p></div>
+      <div class="cell"><div class="n">02</div><h3>再练习</h3><p>完成配套练习册第 12 到 15 页。</p></div>
+      <div class="cell"><div class="n">03</div><h3>后提问</h3><p>把疑问带到下节课一起讨论。</p></div>
+    </div>
+  </div>
+</body>
+</html>

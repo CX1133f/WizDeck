@@ -1,0 +1,410 @@
+<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>二下数学《test》</title>
+    <style>
+        /* 基础重置与全局样式 */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+            background-color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* 幻灯片通用容器 - 严格尺寸约束 */
+        .slide {
+            width: 1920px;
+            height: 1080px;
+            position: relative;
+            overflow: hidden;
+            background-color: #FFFFFF;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* 颜色变量模拟 (通过类名复用) */
+        .bg-primary { background-color: #2F80ED; color: white; }
+        .text-primary { color: #2F80ED; }
+        .text-accent { color: #F2994A; }
+        .text-success { color: #27AE60; }
+        .bg-light { background-color: #F7F9FC; }
+
+        /* 布局辅助 */
+        .center-flex {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            flex-direction: column;
+        }
+        
+        /* 标题样式 */
+        h1.cover-title {
+            font-size: 96px;
+            font-weight: bold;
+            letter-spacing: 5px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h2.slide-header {
+            font-size: 64px;
+            color: #2F80ED;
+            border-left: 15px solid #F2994A;
+            padding-left: 30px;
+            margin-top: 60px;
+            margin-left: 100px;
+            line-height: 1.2;
+        }
+        p.content-text {
+            font-size: 32px;
+            line-height: 1.6;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        ul.content-list {
+            list-style: none;
+            font-size: 30px;
+            line-height: 1.8;
+            color: #333;
+        }
+        ul.content-list li {
+            margin-bottom: 15px;
+            padding-left: 40px;
+            position: relative;
+        }
+        ul.content-list li::before {
+            content: "●";
+            color: #F2994A;
+            position: absolute;
+            left: 0;
+            top: 0;
+        }
+
+        /* 卡片组件 */
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+            border: 2px solid #E0E0E0;
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 40px;
+            margin-top: 40px;
+            padding: 0 100px;
+        }
+        .card-full {
+            margin: 40px 100px;
+        }
+
+        /* 表格/口诀表样式 */
+        .mult-table {
+            width: 80%;
+            margin: 40px auto;
+            border-collapse: collapse;
+            font-size: 28px;
+            text-align: center;
+        }
+        .mult-table th, .mult-table td {
+            border: 1px solid #ddd;
+            padding: 15px;
+        }
+        .mult-table th {
+            background-color: #2F80ED;
+            color: white;
+        }
+        .mult-table tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .highlight-cell {
+            background-color: #FFF3CD !important;
+            font-weight: bold;
+            color: #D35400;
+        }
+
+        /* 装饰元素 */
+        .deco-circle {
+            position: absolute;
+            border-radius: 50%;
+            opacity: 0.1;
+        }
+        .dc-1 { width: 400px; height: 400px; background: #F2994A; top: -100px; right: -100px; }
+        .dc-2 { width: 300px; height: 300px; background: #27AE60; bottom: -50px; left: -50px; }
+        
+        .footer-note {
+            position: absolute;
+            bottom: 30px;
+            right: 50px;
+            font-size: 20px;
+            color: #999;
+        }
+
+        /* 特殊排版：对比题 */
+        .compare-container {
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-start;
+            margin-top: 30px;
+        }
+        .question-box {
+            width: 45%;
+            padding: 30px;
+            border-radius: 15px;
+            font-size: 28px;
+        }
+        .q-mul { background-color: #EBF5FB; border: 2px solid #2F80ED; }
+        .q-add { background-color: #FEF9E7; border: 2px solid #F2994A; }
+        
+        .answer-tag {
+            display: inline-block;
+            background: #27AE60;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-size: 24px;
+            margin-top: 10px;
+        }
+    </style>
+</head><body style="margin:0;"><section class="slide bg-primary" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#2f80ed;"><div style="position:absolute;left:1620px;top:-100px;width:400px;height:400px;"><div class="deco-circle dc-1" style="margin: 0px; position: static; left: auto; top: auto; background-color: rgb(242, 153, 74); color: rgb(255, 255, 255);"></div></div><div style="position:absolute;left:-50px;top:830px;width:300px;height:300px;"><div class="deco-circle dc-2" style="margin: 0px; position: static; left: auto; top: auto; background-color: rgb(39, 174, 96); color: rgb(255, 255, 255);"></div></div><div style="position:absolute;left:0px;top:0px;width:1920px;height:1080px;"><div class="center-flex" style="margin: 0px; color: rgb(255, 255, 255);">
+            <h1 class="cover-title">二下数学《test》</h1>
+            <p style="font-size: 48px; color: rgba(255,255,255,0.9); margin-top: 20px;">6以内的乘法口诀整理与复习</p>
+            <div style="margin-top: 80px; font-size: 32px; color: #F2994A;">主讲人：老师</div>
+        </div></div></section>
+<section class="slide" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#ffffff;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">🎯 学习目标</h2></div><div style="position:absolute;left:100px;top:196.8px;width:1720px;height:291px;"><div class="card card-full" style="margin: 0px; background-color: rgb(255, 255, 255); color: rgb(0, 0, 0);">
+            <ul class="content-list">
+                <li><strong>知识与技能：</strong>经历编制和整理6以内乘法口诀的过程，熟练掌握表内乘法计算。</li>
+                <li><strong>过程与方法：</strong>在探索规律中发展归纳推理能力，积累数学活动经验。</li>
+                <li><strong>情感态度：</strong>感受数学逻辑美，体验成功喜悦，养成认真观察、独立思考的习惯。</li>
+            </ul>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 2 / 10</div></div></section>
+<section class="slide bg-light" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#f7f9fc;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">💡 情境导入：为什么需要口诀？</h2></div><div style="position:absolute;left:0px;top:176.8px;width:1920px;height:376.1px;"><div class="card-grid" style="margin: 0px; color: rgb(0, 0, 0);">
+            <div class="card">
+                <h3 style="font-size: 36px; color: #2F80ED; margin-bottom: 20px;">什么是乘法？</h3>
+                <p class="content-text">求几个<strong>相同加数</strong>的和的简便运算。</p>
+            </div>
+            <div class="card">
+                <h3 style="font-size: 36px; color: #F2994A; margin-bottom: 20px;">快速口算挑战</h3>
+                <p class="content-text" style="font-family: monospace; font-size: 32px;">
+                    2×3 = ?<br>
+                    4×5 = ?<br>
+                    3×3 = ?<br>
+                    6×2 = ?
+                </p>
+            </div>
+        </div></div><div style="position:absolute;left:100px;top:592.9px;width:1720px;height:168px;"><div class="card card-full" style="background-color: rgb(235, 245, 251); border-color: rgb(47, 128, 237); margin: 0px; color: rgb(0, 0, 0);">
+            <p class="content-text" style="text-align: center; font-weight: bold; color: #2F80ED;">
+                🚀 想要又快又准地计算乘法，我们需要一个好帮手——<span style="color:#F2994A; font-size: 40px;">乘法口诀</span>！
+            </p>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 3 / 10</div></div></section>
+<section class="slide" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#ffffff;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">🔍 探究新知：口诀表的秘密</h2></div><div style="position:absolute;left:0px;top:176.8px;width:1920px;height:552px;"><div style="display: flex; justify-content: center; margin: 0px; color: rgb(0, 0, 0);">
+            
+[错误] API调用失败: &lt;400&gt; InternalError.Algo.DataInspectionFailed: Output data may contain inappropriate content.                    <table class="mult-table">
+                <tbody><tr>
+                    <th></th>
+                    <th>1</th>
+                    <th>2</th>
+                    <th>3</th>
+                    <th>4</th>
+                    <th>5</th>
+                    <th>6</th>
+                </tr>
+                <tr>
+                    <td><strong>1</strong></td>
+                    <td>一一得一</td>
+                    <td>一二得二</td>
+                    <td>一三得三</td>
+                    <td>一四得四</td>
+                    <td>一五得五</td>
+                    <td>一六得六</td>
+                </tr>
+                <tr>
+                    <td><strong>2</strong></td>
+                    <td>二一得二</td>
+                    <td>二二得四</td>
+                    <td>二三得六</td>
+                    <td>二四得八</td>
+                    <td>二五一十</td>
+                    <td>二六十二</td>
+                </tr>
+                <tr>
+                    <td><strong>3</strong></td>
+                    <td>三一得三</td>
+                    <td>三二得六</td>
+                    <td>三三得九</td>
+                    <td>三四十二</td>
+                    <td>三五十五</td>
+                    <td>三六十八</td>
+                </tr>
+                <tr>
+                    <td><strong>4</strong></td>
+                    <td>四一得四</td>
+                    <td>四二得八</td>
+                    <td>四三十二</td>
+                    <td>四四十六</td>
+                    <td>四五二十</td>
+                    <td>四六二十四</td>
+                </tr>
+                <tr>
+                    <td><strong>5</strong></td>
+                    <td>五一得五</td>
+                    <td>五二得十</td>
+                    <td>五三十五</td>
+                    <td>五四二十</td>
+                    <td>五五二十五</td>
+                    <td>五六三十</td>
+                </tr>
+                <tr>
+                    <td><strong>6</strong></td>
+                    <td>六一得六</td>
+                    <td>六二十二</td>
+                    <td>六三十八</td>
+                    <td>六四二十四</td>
+                    <td>六五三十</td><td>六六三十六</td>
+                </tr>
+            </tbody></table>
+        </div></div><div style="position:absolute;left:100px;top:748.8px;width:1720px;height:161.6px;"><div class="card card-full" style="margin: 0px; background-color: rgb(247, 249, 252); color: rgb(0, 0, 0);">
+            <p class="content-text" style="font-size: 36px; text-align: center;">
+                <span style="color:#2F80ED; font-weight:bold;">横着看：</span> 每一行都是同一个数去乘 1、2、3...6，积依次增加这个相同的加数。
+            </p>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 4 / 10</div></div></section>
+<section class="slide bg-light" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#f7f9fc;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">🔍 探究新知：更多规律</h2></div><div style="position:absolute;left:0px;top:176.8px;width:1920px;height:530.4px;"><div class="card-grid" style="margin: 0px; color: rgb(0, 0, 0);">
+            <div class="card" style="border-left: 10px solid #27AE60;">
+                <h3 style="font-size: 36px; color: #27AE60; margin-bottom: 20px;">📏 竖着看</h3>
+                <p class="content-text">
+                    每一列的<strong>第一个乘数相同</strong>。<br>
+                    例如第3列：<br>
+                    一三得三 → 二三得六 → 三三得九...<br>
+                    积每次增加 <span style="color:#F2994A; font-weight:bold;">3</span>。
+                </p>
+            </div>
+            <div class="card" style="border-left: 10px solid #F2994A;">
+                <h3 style="font-size: 36px; color: #F2994A; margin-bottom: 20px;">↘️ 斜着看</h3>
+                <p class="content-text">
+                    两个乘数<strong>相同</strong>的那一句。<br>
+                    一一得一<br>
+                    二二得四<br>
+                    三三得九<br>
+                    ...<br>
+                    六六三十六<br>
+                    <span style="font-size: 24px; color: #666;">（这些是平方数）</span>
+                </p>
+            </div>
+        </div></div><div style="position:absolute;left:100px;top:747.2px;width:1720px;height:155.2px;"><div class="card card-full" style="background-color: rgb(232, 248, 245); border-color: rgb(39, 174, 96); margin: 0px; color: rgb(0, 0, 0);">
+            <p class="content-text" style="text-align: center; font-weight: bold; color: #27AE60;">
+                🌟 小结：掌握规律，背诵口诀更轻松！相邻两句口诀之间，积相差这个相同的加数。
+            </p>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 5 / 10</div></div></section>
+<section class="slide" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#ffffff;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">🎮 游戏互动：对口令大挑战</h2></div><div style="position:absolute;left:0px;top:176.8px;width:1920px;height:600px;"><div style="display: flex; justify-content: space-around; align-items: center; height: 600px; margin: 0px; color: rgb(0, 0, 0);">
+            
+            <div class="card" style="width: 40%; text-align: center; padding: 60px;">
+                <div style="font-size: 48px; color: #2F80ED; margin-bottom: 30px;">老师说前半句</div>
+                <div style="font-size: 64px; font-weight: bold; color: #333; margin-bottom: 20px;">三五？</div>
+                <div style="font-size: 48px; color: #F2994A;">学生接后半句</div>
+                <div style="font-size: 64px; font-weight: bold; color: #27AE60; margin-top: 20px;">十五！</div>
+            </div>
+
+            <div class="card" style="width: 40%; text-align: center; padding: 60px; background-color: #FFF3CD;">
+                <div style="font-size: 48px; color: #D35400; margin-bottom: 30px;">难度升级：算式转口诀</div>
+                <div style="font-size: 64px; font-weight: bold; color: #333; margin-bottom: 20px;">2×5 = ?</div>
+                <div style="font-size: 48px; color: #2F80ED;">用的哪句口诀？</div>
+                <div style="font-size: 64px; font-weight: bold; color: #27AE60; margin-top: 20px;">二五一十</div>
+            </div>
+
+        </div></div><div style="position:absolute;left:100px;top:796.8px;width:1720px;height:148.8px;"><div class="card card-full" style="margin: 0px; background-color: rgb(235, 245, 251); color: rgb(0, 0, 0);">
+            <p class="content-text" style="font-size: 28px;">
+                💡 <strong>易错点提醒：</strong> “五五二十五”容易写成“五五二十”，要注意进位和书写准确性哦！
+            </p>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 6 / 10</div></div></section>
+<section class="slide bg-light" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#f7f9fc;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">⚖️ 对比辨析：什么时候用乘法？</h2></div><div style="position:absolute;left:0px;top:166.8px;width:1920px;height:321.5px;"><div class="compare-container" style="margin: 0px; color: rgb(0, 0, 0);">
+            <!-- 题目1 -->
+            <div class="question-box q-mul">
+                <h3 style="font-size: 32px; color: #2F80ED; margin-bottom: 15px;">📦 题目 1</h3>
+                <p class="content-text" style="font-size: 28px;">每个盒子里有 <strong>6</strong> 支铅笔，<strong>3</strong> 个盒子里一共有多少支铅笔？</p>
+                <div style="margin-top: 20px; font-family: monospace; font-size: 32px;">
+                    列式：6 × 3 = 18
+                </div>
+                <div class="answer-tag">口诀：三六十八</div>
+                <p style="font-size: 24px; color: #666; margin-top: 15px;">关键词：<strong>几个几</strong> (3个6)</p>
+            </div>
+
+            <!-- 题目2 -->
+            <div class="question-box q-add">
+                <h3 style="font-size: 32px; color: #F2994A; margin-bottom: 15px;">✏️ 题目 2</h3>
+                <p class="content-text" style="font-size: 28px;">小明有 <strong>6</strong> 支铅笔，小红有 <strong>3</strong> 支铅笔，他们一共有多少支铅笔？</p>
+                <div style="margin-top: 20px; font-family: monospace; font-size: 32px;">
+                    列式：6 + 3 = 9
+                </div>
+                <div class="answer-tag" style="background-color: #F2994A;">方法：加法</div>
+                <p style="font-size: 24px; color: #666; margin-top: 15px;">关键词：<strong>几和几</strong> (合起来)</p>
+            </div>
+        </div></div><div style="position:absolute;left:100px;top:518.3px;width:1720px;height:155.2px;"><div class="card card-full" style="background-color: white; border: 2px dashed rgb(39, 174, 96); margin: 0px; color: rgb(0, 0, 0);">
+            <p class="content-text" style="text-align: center; font-size: 32px; font-weight: bold; color: #27AE60;">
+                ✅ 核心区别：求<strong>相同加数</strong>的和用乘法；求<strong>不同数量</strong>的总和用加法。
+            </p>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 7 / 10</div></div></section>
+<section class="slide" style="width: 1920px; height: 1080px;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#ffffff;"><div style="position:absolute;left:100px;top:60px;width:1820px;height:76.8px;"><h2 class="slide-header" style="margin: 0px; color: rgb(47, 128, 237);">🧩 综合应用：解决实际问题</h2></div><div style="position:absolute;left:100px;top:176.8px;width:1720px;height:440.8px;"><div class="card card-full" style="padding: 50px; margin: 0px; background-color: rgb(255, 255, 255); color: rgb(0, 0, 0);">
+            <p class="content-text" style="font-size: 36px; line-height: 1.8;">
+                🪑 <strong>问题：</strong>一张桌子坐 <span style="color:#2F80ED; font-weight:bold;">4</span> 人，<span style="color:#2F80ED; font-weight:bold;">6</span> 张桌子能坐多少人？如果已经有 <span style="color:#F2994A; font-weight:bold;">20</span> 人坐下了，还空着多少个座位？
+            </p>
+            
+            <div style="display: flex; gap: 40px; margin-top: 40px;">
+                <div style="flex: 1; background: #F7F9FC; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4 style="font-size: 28px; color: #2F80ED; margin-bottom: 10px;">第一步：算总人数</h4>
+                    <p style="font-size: 32px; font-family: monospace;">4 × 6 = 24 (人)</p>
+                    <p style="font-size: 24px; color: #666;">口诀：四六二十四</p>
+                </div>
+                
+                <div style="flex: 1; background: #F7F9FC; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4 style="font-size: 28px; color: #F2994A; margin-bottom: 10px;">第二步：算空座位</h4>
+                    <p style="font-size: 32px; font-family: monospace;">24 - 20 = 4 (个)</p>
+                    <p style="font-size: 24px; color: #666;">减法计算</p>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 30px; font-size: 36px; font-weight: bold; color: #27AE60;">
+                答：还空着 4 个座位。
+            </div>
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 8 / 10</div></div></section>
+<section class="slide bg-primary" style="width: 1920px; height: 1080px; color: white;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;background:#2f80ed;"><div style="position:absolute;left:1620px;top:-100px;width:400px;height:400px;"><div class="deco-circle dc-1" style="margin: 0px; position: static; left: auto; top: auto; background-color: rgb(242, 153, 74); color: rgb(255, 255, 255);"></div></div><div style="position:absolute;left:0px;top:80px;width:1920px;height:86px;"><h2 style="font-size: 64px; text-align: center; margin: 0px; color: white;">🎓 课堂小结</h2></div><div style="position:absolute;left:0px;top:226px;width:1920px;height:321.9px;"><div style="display: flex; justify-content: center; gap: 40px; margin: 0px; color: rgb(255, 255, 255);">
+            <div class="card" style="background: rgba(255,255,255,0.9); color: #333; width: 30%;">
+                <h3 style="font-size: 32px; color: #2F80ED; margin-bottom: 20px;">📝 知识收获</h3>
+                <ul class="content-list" style="font-size: 24px;">
+                    <li>掌握了6以内乘法口诀表。</li>
+                    <li>发现了横、竖、斜的排列规律。</li>
+                    <li>区分了“几个几”与“几和几”。</li>
+                </ul>
+            </div>
+            
+            <div class="card" style="background: rgba(255,255,255,0.9); color: #333; width: 30%;">
+                <h3 style="font-size: 32px; color: #F2994A; margin-bottom: 20px;">💪 能力提升</h3>
+                <ul class="content-list" style="font-size: 24px;">
+                    <li>能快速准确运用口诀计算。</li>
+                    <li>能解决简单的两步实际问题。</li>
+                    <li>养成了观察和思考的习惯。</li>
+                </ul>
+            </div>
+            
+            <div class="card" style="background: rgba(255,255,255,0.9); color: #333; width: 30%;">
+                <h3 style="font-size: 32px; color: #27AE60; margin-bottom: 20px;">🌟 课后任务</h3>
+                <ul class="content-list" style="font-size: 24px;">
+                    <li>和家人玩“对口令”游戏。</li>
+                    <li>完成练习册相关题目。</li>
+                    <li>做到脱口而出，准确无误。</li>
+                </ul>
+            </div>
+        </div></div><div style="position:absolute;left:0px;top:607.9px;width:1920px;height:64.7px;"><div style="text-align: center; margin: 0px; font-size: 48px; font-weight: bold; color: rgb(242, 153, 74);">
+            同学们真棒！下节课见！👋
+        </div></div><div style="position:absolute;left:1761.8px;top:1023.3px;width:108.2px;height:26.7px;"><div class="footer-note" style="color: rgba(255, 255, 255, 0.7); margin: 0px; position: static; left: auto; top: auto;">Page 9 / 10</div></div></section>
+<section class="slide" style="width: 1920px; height: 1080px; background-color: #F7F9FC;position:relative;width:1920px;height:1080px;overflow:hidden;margin:0 auto;"><div style="position:absolute;left:0px;top:0px;width:1920px;height:1080px;"><div class="center-flex" style="margin: 0px; color: rgb(0, 0, 0);">
+            <div style="font-size: 120px; color: #2F80ED; margin-bottom: 40px;">✅</div>
+            <h1 style="font-size: 80px; color: #333; margin-bottom: 20px;">谢谢观看</h1>
+            <p style="font-size: 40px; color: #666;">二下数学《test》</p>
+            <p style="font-size: 30px; color: #999; margin-top: 40px;">祝同学们学习进步！</p>
+        </div></div><div style="position:absolute;left:1750px;top:1023.3px;width:120px;height:26.7px;"><div class="footer-note" style="margin: 0px; position: static; left: auto; top: auto; color: rgb(153, 153, 153);">Page 10 / 10</div></div></section></body></html>

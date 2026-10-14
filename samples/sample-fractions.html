@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>分数的意义与性质 · 课件</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #101418; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .slide {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: #faf8f3;
+    margin: 0 auto 32px;
+    color: #1a2233;
+  }
+  .pad { position: absolute; left: 96px; right: 96px; }
+
+  /* ---------- 封面 ---------- */
+  .cover { background: #1a2233; color: #f7f4ec; }
+  .cover .glow {
+    position: absolute; width: 1100px; height: 1100px; border-radius: 50%;
+    right: -260px; top: -380px;
+    background: radial-gradient(circle, rgba(242,153,74,.42) 0%, rgba(242,153,74,0) 68%);
+  }
+  .cover .kicker {
+    position: absolute; left: 96px; top: 300px;
+    font-size: 26px; letter-spacing: 10px; color: #f2994a; font-weight: 700;
+  }
+  .cover h1 {
+    position: absolute; left: 96px; top: 368px;
+    font-size: 132px; font-weight: 900; letter-spacing: 4px; line-height: 1.1;
+  }
+  .cover h1 em { color: #f2994a; font-style: normal; }
+  .cover .sub {
+    position: absolute; left: 96px; top: 560px; width: 900px;
+    font-size: 32px; line-height: 1.7; color: #aeb9cc;
+  }
+  .cover .rule {
+    position: absolute; left: 96px; top: 516px; width: 168px; height: 8px;
+    background: #f2994a;
+  }
+  .cover .meta {
+    position: absolute; left: 96px; bottom: 96px;
+    font-size: 24px; color: #6f7d93; letter-spacing: 3px;
+  }
+  .cover .big {
+    position: absolute; right: 130px; bottom: 120px;
+    font-size: 300px; font-weight: 900; color: rgba(242,153,74,.16); line-height: 1;
+  }
+
+  /* ---------- 通用内容页 ---------- */
+  .kicker2 {
+    position: absolute; left: 96px; top: 92px;
+    font-size: 22px; letter-spacing: 8px; color: #f2994a; font-weight: 700;
+  }
+  h2.title {
+    position: absolute; left: 96px; top: 140px;
+    font-size: 72px; font-weight: 900; letter-spacing: 1px;
+  }
+  .rule2 { position: absolute; left: 96px; top: 250px; width: 96px; height: 6px; background: #2f80ed; }
+  .page-no {
+    position: absolute; right: 96px; bottom: 56px;
+    font-size: 22px; color: #b3bccb; letter-spacing: 2px;
+  }
+  .foot { position: absolute; left: 96px; bottom: 56px; font-size: 22px; color: #b3bccb; }
+
+  /* ---------- 三栏卡片 ---------- */
+  .cards { position: absolute; left: 96px; top: 320px; right: 96px; display: flex; gap: 40px; }
+  .card {
+    flex: 1; height: 420px; background: #ffffff; border-radius: 20px;
+    padding: 44px; border-top: 8px solid #2f80ed;
+    box-shadow: 0 18px 42px rgba(26,34,51,.10);
+  }
+  .card .num { font-size: 58px; font-weight: 900; color: #dde5f0; line-height: 1; }
+  .card h3 { font-size: 40px; margin: 18px 0 20px; font-weight: 800; }
+  .card p { font-size: 26px; line-height: 1.75; color: #55617a; }
+  .card.alt { border-top-color: #f2994a; }
+
+  /* ---------- 数据条 ---------- */
+  .stats { position: absolute; left: 96px; top: 330px; right: 96px; display: flex; gap: 56px; }
+  .stat { flex: 1; }
+  .stat .v { font-size: 104px; font-weight: 900; color: #1a2233; line-height: 1; }
+  .stat .v i { font-size: 40px; font-style: normal; color: #f2994a; }
+  .stat .l { font-size: 26px; color: #55617a; margin-top: 14px; }
+  .stat .bar { height: 14px; border-radius: 7px; background: #e8edf5; margin-top: 26px; overflow: hidden; }
+  .stat .bar i { display: block; height: 100%; background: #2f80ed; border-radius: 7px; }
+  .stat:nth-child(2) .bar i { background: #f2994a; }
+  .stat:nth-child(3) .bar i { background: #27ae60; }
+
+  /* ---------- 对比 ---------- */
+  .cmp { position: absolute; left: 96px; top: 320px; right: 96px; display: flex; gap: 0; }
+  .cmp .side { flex: 1; padding: 52px; }
+  .cmp .side.a { background: #1a2233; color: #f7f4ec; border-radius: 20px 0 0 20px; }
+  .cmp .side.b { background: #f2994a; color: #3a2a00; border-radius: 0 20px 20px 0; }
+  .cmp .side .tag { font-size: 24px; letter-spacing: 5px; font-weight: 700; opacity: .75; }
+  .cmp .side h3 { font-size: 52px; font-weight: 900; margin: 16px 0 26px; }
+  .cmp .side ul { list-style: none; }
+  .cmp .side li { font-size: 28px; line-height: 2; padding-left: 30px; position: relative; }
+  .cmp .side li:before { content: ""; position: absolute; left: 0; top: 22px; width: 12px; height: 12px; border-radius: 3px; background: currentColor; opacity: .6; }
+  .cmp .frac { font-size: 120px; font-weight: 900; text-align: center; margin-top: 40px; }
+
+  /* ---------- 表格 ---------- */
+  table.tbl { position: absolute; left: 96px; top: 330px; right: 96px; border-collapse: collapse; font-size: 27px; }
+  table.tbl th {
+    background: #1a2233; color: #f7f4ec; text-align: left;
+    padding: 26px 32px; font-size: 25px; letter-spacing: 2px; font-weight: 700;
+  }
+  table.tbl td { padding: 26px 32px; border-bottom: 1px solid #e3e8ef; color: #37455e; }
+  table.tbl tr:nth-child(even) td { background: #ffffff; }
+  table.tbl tr:nth-child(odd) td { background: #f4f1ea; }
+  table.tbl td.hi { color: #c9302c; font-weight: 800; }
+
+  /* ---------- 图示 ---------- */
+  .diag { position: absolute; left: 96px; top: 340px; right: 96px; height: 520px; }
+  .node {
+    position: absolute; width: 300px; height: 132px; border-radius: 16px;
+    background: #ffffff; border: 3px solid #dde5f0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 800; box-shadow: 0 14px 30px rgba(26,34,51,.09);
+  }
+  .node.k { background: #1a2233; color: #f7f4ec; border-color: #1a2233; }
+  .node.a { background: #f2994a; color: #3a2a00; border-color: #f2994a; }
+  .arrow { position: absolute; height: 6px; background: #c9d4e4; }
+  .arrow:after {
+    content: ""; position: absolute; right: -2px; top: -13px;
+    border-left: 22px solid #c9d4e4; border-top: 16px solid transparent; border-bottom: 16px solid transparent;
+  }
+  .note { position: absolute; font-size: 24px; color: #7d8ba3; }
+
+  /* ---------- 结语 ---------- */
+  .end { background: #1a2233; color: #f7f4ec; }
+  .end h1 { position: absolute; left: 96px; top: 400px; font-size: 110px; font-weight: 900; }
+  .end .rule3 { position: absolute; left: 96px; top: 560px; width: 140px; height: 8px; background: #f2994a; }
+  .end p { position: absolute; left: 96px; top: 620px; font-size: 34px; color: #aeb9cc; }
+</style>
+</head>
+<body>
+
+<!-- 1 封面 -->
+<section class="slide cover">
+  <div class="glow"></div>
+  <div class="kicker">小学数学 · 五年级下册</div>
+  <h1>分数的<em>意义</em>与性质</h1>
+  <div class="rule"></div>
+  <div class="sub">从一个整体到一个数——理解分数如何表示部分与整体的关系，掌握分数的基本性质。</div>
+  <div class="meta">授课教师：李老师　　课时：2 课时</div>
+  <div class="big">1/2</div>
+</section>
+
+<!-- 2 三栏卡片 -->
+<section class="slide">
+  <div class="kicker2">学习目标</div>
+  <h2 class="title">这节课我们要掌握什么</h2>
+  <div class="rule2"></div>
+  <div class="cards">
+    <div class="card">
+      <div class="num">01</div>
+      <h3>认识单位「1」</h3>
+      <p>把一个物体或一些物体看作一个整体，这个整体就是单位「1」。</p>
+    </div>
+    <div class="card alt">
+      <div class="num">02</div>
+      <h3>理解分数意义</h3>
+      <p>把单位「1」平均分成若干份，表示这样一份或几份的数，叫做分数。</p>
+    </div>
+    <div class="card">
+      <div class="num">03</div>
+      <h3>掌握基本性质</h3>
+      <p>分数的分子和分母同乘或同除以相同的数（0 除外），分数大小不变。</p>
+    </div>
+  </div>
+  <div class="foot">分数的意义与性质</div>
+  <div class="page-no">02 / 06</div>
+</section>
+
+<!-- 3 数据条 -->
+<section class="slide">
+  <div class="kicker2">课堂数据</div>
+  <h2 class="title">一次小测的三组观察</h2>
+  <div class="rule2"></div>
+  <div class="stats">
+    <div class="stat">
+      <div class="v">92<i>%</i></div>
+      <div class="l">能正确说出单位「1」</div>
+      <div class="bar"><i style="width:92%"></i></div>
+    </div>
+    <div class="stat">
+      <div class="v">78<i>%</i></div>
+      <div class="l">能画出等值的分数</div>
+      <div class="bar"><i style="width:78%"></i></div>
+    </div>
+    <div class="stat">
+      <div class="v">34<i>%</i></div>
+      <div class="l">能说明性质成立的理由</div>
+      <div class="bar"><i style="width:34%"></i></div>
+    </div>
+  </div>
+  <div class="foot">数据来源：本班 42 名学生随堂练习</div>
+  <div class="page-no">03 / 06</div>
+</section>
+
+<!-- 4 对比 -->
+<section class="slide">
+  <div class="kicker2">对比辨析</div>
+  <h2 class="title">一样大，为什么不一样</h2>
+  <div class="rule2"></div>
+  <div class="cmp">
+    <div class="side a">
+      <div class="tag">表示方法</div>
+      <h3>形式不同</h3>
+      <ul>
+        <li>分子分母的数值不同</li>
+        <li>平均分的份数不同</li>
+        <li>取的份数也随之不同</li>
+      </ul>
+      <div class="frac">1/2</div>
+    </div>
+    <div class="side b">
+      <div class="tag">大小关系</div>
+      <h3>大小相同</h3>
+      <ul>
+        <li>都是整体的一半</li>
+        <li>在数轴上落在同一点</li>
+        <li>是同一种大小的两种写法</li>
+      </ul>
+      <div class="frac">2/4</div>
+    </div>
+  </div>
+  <div class="foot">关键：大小相等，但意义与表示不同</div>
+  <div class="page-no">04 / 06</div>
+</section>
+
+<!-- 5 表格 -->
+<section class="slide">
+  <div class="kicker2">性质验证</div>
+  <h2 class="title">分子分母同时变化的结果</h2>
+  <div class="rule2"></div>
+  <table class="tbl">
+    <thead>
+      <tr><th>同时乘或除以的数</th><th>分子</th><th>分母</th><th>分数</th><th>与原分数比较</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>不变化</td><td>1</td><td>2</td><td>1/2</td><td>—</td></tr>
+      <tr><td>同时乘 2</td><td>2</td><td>4</td><td>2/4</td><td class="hi">大小相等</td></tr>
+      <tr><td>同时乘 3</td><td>3</td><td>6</td><td>3/6</td><td class="hi">大小相等</td></tr>
+      <tr><td>同时除以 3</td><td>1</td><td>2</td><td>1/2</td><td class="hi">大小相等</td></tr>
+      <tr><td>同时乘 0</td><td>0</td><td>0</td><td>0/0</td><td>不成立（0 除外）</td></tr>
+    </tbody>
+  </table>
+  <div class="foot">除以的数不能为 0，这是性质成立的前提</div>
+  <div class="page-no">05 / 06</div>
+</section>
+
+<!-- 6 图示 + 结语 -->
+<section class="slide">
+  <div class="kicker2">推理过程</div>
+  <h2 class="title">性质是怎么被证明的</h2>
+  <div class="rule2"></div>
+  <div class="diag">
+    <div class="node k" style="left:0;top:0;">单位「1」</div>
+    <div class="arrow" style="left:320px;top:63px;width:130px;"></div>
+    <div class="node" style="left:470px;top:0;">平均分成 2 份</div>
+    <div class="arrow" style="left:790px;top:63px;width:130px;"></div>
+    <div class="node a" style="left:940px;top:0;">取其中 1 份 = 1/2</div>
+
+    <div class="note" style="left:0;top:180px;">分子分母同乘 2，等于把每一份再平均分成 2 份</div>
+
+    <div class="node k" style="left:0;top:250px;">同一整体</div>
+    <div class="arrow" style="left:320px;top:313px;width:130px;"></div>
+    <div class="node" style="left:470px;top:250px;">平均分成 4 份</div>
+    <div class="arrow" style="left:790px;top:313px;width:130px;"></div>
+    <div class="node a" style="left:940px;top:250px;">取其中 2 份 = 2/4</div>
+
+    <div class="note" style="left:0;top:430px;font-size:30px;color:#1a2233;font-weight:700;">
+      因为整体没变、取的部分也没变，所以 1/2 = 2/4。
+    </div>
+  </div>
+  <div class="foot">结论：分数的基本性质来自「整体的不变性」</div>
+  <div class="page-no">06 / 06</div>
+</section>
+
+</body>
+</html>

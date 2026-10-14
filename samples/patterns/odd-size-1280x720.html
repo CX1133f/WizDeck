@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>非 1920 尺寸课件</title>
+<style>
+  body { margin: 0; font-family: "Microsoft YaHei", sans-serif; }
+  /* 故意用 1280×720，模拟常见的 AI 生成 / 网页版式 */
+  .slide { width: 1280px; height: 720px; position: relative; background: #101828; color: #fff; overflow: hidden; }
+  .slide h1 { position: absolute; left: 60px; top: 120px; margin: 0; font-size: 48px; }
+  .slide .sub { position: absolute; left: 60px; top: 220px; font-size: 22px; color: #98a2b3; }
+  .slide .box { position: absolute; left: 60px; top: 320px; width: 400px; height: 160px; background: #f7a600; }
+  .slide .box2 { position: absolute; left: 500px; top: 320px; width: 400px; height: 160px; background: #5b8def; }
+</style>
+</head>
+<body>
+
+<section class="slide">
+  <h1>第一页标题</h1>
+  <div class="sub">副标题文字</div>
+  <div class="box"></div>
+  <div class="box2"></div>
+</section>
+
+<section class="slide">
+  <h1>第二页标题</h1>
+  <div class="sub">副标题文字</div>
+  <div class="box"></div>
+  <div class="box2"></div>
+</section>
+
+<section class="slide">
+  <h1>第三页标题</h1>
+  <div class="sub">副标题文字</div>
+  <div class="box"></div>
+  <div class="box2"></div>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>固定定位分页 · 三种岩石</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #15181d; }
+  /* 每页都是 fixed 铺满视口的写法（Bento / reveal 类工具常见） */
+  .page {
+    position: fixed; inset: 0;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 0 140px; box-sizing: border-box; overflow: hidden;
+  }
+  /* 这类工具一次只显示一页，其余用 display:none 收起 —— 引擎需要能看穿这一点 */
+  .page + .page { display: none; }
+  .p1 { background: #1c2733; color: #f4f7fa; }
+  .p2 { background: #f7f4ee; color: #232a33; }
+  .p3 { background: #2f5d4f; color: #eefaf4; }
+  .eyebrow { font-size: 26px; letter-spacing: 10px; opacity: .72; margin-bottom: 26px; }
+  h1 { margin: 0; font-size: 128px; font-weight: 900; letter-spacing: 3px; }
+  .p2 h1, .p3 h1 { font-size: 104px; }
+  .desc { margin-top: 36px; font-size: 34px; line-height: 1.8; max-width: 1200px; opacity: .85; }
+  .chips { display: flex; gap: 18px; margin-top: 52px; }
+  .chip {
+    padding: 16px 30px; border-radius: 999px; font-size: 26px;
+    border: 2px solid currentColor; opacity: .8;
+  }
+  .badge {
+    position: absolute; right: 140px; bottom: 100px;
+    font-size: 200px; font-weight: 900; opacity: .1; line-height: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="page p1">
+    <div class="eyebrow">地球科学 · 岩石</div>
+    <h1>三大类岩石</h1>
+    <div class="desc">岩浆岩、沉积岩、变质岩——它们记录了地球不同的形成过程。</div>
+    <div class="badge">01</div>
+  </div>
+
+  <div class="page p2">
+    <div class="eyebrow">第一类</div>
+    <h1>岩浆岩</h1>
+    <div class="desc">由岩浆冷却凝固形成。冷却快则结晶细，冷却慢则结晶粗。</div>
+    <div class="chips">
+      <span class="chip">玄武岩</span>
+      <span class="chip">花岗岩</span>
+      <span class="chip">安山岩</span>
+    </div>
+    <div class="badge">02</div>
+  </div>
+
+  <div class="page p3">
+    <div class="eyebrow">第二类</div>
+    <h1>沉积岩</h1>
+    <div class="desc">由碎屑、化学沉淀或生物遗骸层层堆积、压实、胶结而成。</div>
+    <div class="chips">
+      <span class="chip">砂岩</span>
+      <span class="chip">石灰岩</span>
+      <span class="chip">页岩</span>
+    </div>
+    <div class="badge">03</div>
+  </div>
+</body>
+</html>
