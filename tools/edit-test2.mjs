@@ -365,7 +365,7 @@ console.log('\n[9] 检查器按钮不报错');
   const r = await ev(`(async () => {
     const doc = WD.app.E.stage.getDoc();
     WD.app._internal.setSelection([doc.querySelector('#a')]);
-    const btns = Array.from(document.querySelectorAll('#sec-element button, #seg-align button, #seg-weight button, #seg-textalign button'))
+    const btns = Array.from(document.querySelectorAll('#sec-element button, #ctx-bar button, #seg-align button, #seg-weight button'))
       .filter(b => b.offsetParent !== null && !b.disabled);
     const thrown = [];
     for (const b of btns) {

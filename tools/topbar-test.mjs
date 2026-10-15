@@ -48,7 +48,15 @@ const send = (method, params = {}) => new Promise((res, rej) => {
 });
 const ev = async (x) => {
   const r = await send('Runtime.evaluate', { expression: x, awaitPromise: true, returnByValue: true });
-  if (r.exceptionDetails) throw new Error('页面异常: ' + JSON.stringify(r.exceptionDetails.text));
+  if (r.exceptionDetails) {
+    /* 只报 .text 是不够的：抛的不是 Error 对象时 text 永远是 "Uncaught"，
+       等于什么都没说。要连 exception.description 一起打出来。 */
+    const d = r.exceptionDetails;
+    const detail = (d.exception && (d.exception.description || d.exception.value)) || d.text;
+    const where = d.stackTrace && d.stackTrace.callFrames && d.stackTrace.callFrames[0];
+    throw new Error('页面异常: ' + detail +
+      (where ? '  @ ' + (where.url || '').split('/').pop() + ':' + (where.lineNumber + 1) : ''));
+  }
   return r.result.value;
 };
 
@@ -64,6 +72,15 @@ await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url: 'file:///' + path.resolve('WizDeck.html').replace(/\\/g, '/') });
 await sleep(2500);
+
+/* 放映按钮的「空状态」检查必须放在 loadSample 之前：
+   这个测试一上来就载入了示例课件，到 [A] 时已经有文档了，测不到「没文档」这一态。 */
+const presEmpty = await ev(`(() => {
+  const b = document.getElementById('btn-present');
+  if (!b) return { missing: true };
+  return { missing: false, hiddenAttr: b.hidden, display: getComputedStyle(b).display,
+           barEmptyHidden: document.getElementById('stage-empty').hidden };
+})()`);
 await ev('(async () => { await WD.app.loadSample(); return true; })()');
 await ev('(async () => { for (let i=0;i<80;i++){ await new Promise(r=>setTimeout(r,150)); if (WD.app.E.stage.ready && WD.store.count()>0) return true;} return false; })()');
 await sleep(1500);
@@ -75,7 +92,7 @@ const r = await ev(`(() => {
   const tb = document.querySelector('.topbar');
   const ids = ['btn-undo','btn-redo','btn-add-slide','btn-insert-text','btn-insert-title',
                'btn-insert-shape','btn-insert-image','btn-insert-video','btn-painter','btn-find',
-               'btn-save-menu','btn-present','btn-theme','btn-help'];
+               'btn-save-menu','btn-theme','btn-help'];
   const buttons = ids.map(id => {
     const b = document.getElementById(id);
     if (!b) return { id, missing: true };
@@ -92,13 +109,17 @@ const r = await ev(`(() => {
              left: Math.round(r.left), right: Math.round(r.right) };
   });
   const tr = tb.getBoundingClientRect();
+  /* fmt 组已从顶栏挪到第二行 #ctx-bar，这里改成量第二行的按钮 */
+  const ctx = document.getElementById('ctx-bar');
   const fmt = ['fmt-bold','fmt-italic','fmt-underline','fmt-size-dec','fmt-size-inc',
-               'fmt-align-left','fmt-align-center','fmt-align-right','fmt-color']
+               'fmt-align-left','fmt-align-center','fmt-align-right','fmt-align-justify','fmt-color']
     .map(id => { const b = document.getElementById(id); const cs = getComputedStyle(b);
       return { id, border: parseFloat(cs.borderTopWidth) + parseFloat(cs.borderLeftWidth)
                + parseFloat(cs.borderRightWidth) + parseFloat(cs.borderBottomWidth),
                w: Math.round(b.getBoundingClientRect().width) }; });
-  return { buttons, fmt, tbW: Math.round(tr.width), tbRight: Math.round(tr.right),
+  return { buttons, fmt, ctxInTopbar: !!ctx && tb.contains(ctx),
+           fmtInTopbar: tb.contains(document.getElementById('fmt-group')),
+           tbW: Math.round(tr.width), tbRight: Math.round(tr.right),
            maxRight: Math.max(...buttons.map(b => b.right)),
            minLeft: Math.min(...buttons.map(b => b.left)),
            vw: window.innerWidth };
@@ -117,6 +138,131 @@ for (const b of r.buttons) {
 }
 for (const f of r.fmt) check(f.id + ' 无边框', f.border === 0, f.border + 'px');
 check('顶栏不溢出视口', r.maxRight <= r.vw && r.minLeft >= 0, `最右 ${r.maxRight} / 视口 ${r.vw}`);
+
+/* 第二行上下文操作栏 */
+console.log('\n[A3] 第二行：随选区换内容，且控件不在右栏留副本');
+const ctxShape = await ev(`(() => {
+  const bar = document.getElementById('ctx-bar');
+  const tb = document.querySelector('.topbar');
+  const insp = document.getElementById('insp-body');
+  const dup = ['seg-align','f-x','f-y','f-w','f-h','f-rot','f-fill','f-fill-text',
+               'tbl-tools','btn-layer-up','btn-layer-down','btn-layer-front',
+               'btn-layer-back','btn-el-dup','btn-el-dup','btn-el-del',
+               'f-slide-layout','f-slide-bg','f-slide-bg-text','el-kind','el-tag']
+    .filter(id => document.querySelectorAll('#' + id).length > 1);
+  return {
+    exists: !!bar, inTopbar: tb.contains(bar), inInspector: insp.contains(bar),
+    barTop: bar ? Math.round(bar.getBoundingClientRect().top) : null,
+    tbBottom: Math.round(tb.getBoundingClientRect().bottom),
+    dupIds: dup,
+    inspKeeps: ['f-radius','f-border-color','f-font','seg-weight','f-line-height',
+                'f-letter-spacing','f-opacity','f-css','f-notes','layer-list']
+      .every(id => !!document.getElementById(id)),
+    gone: ['f-font-size','f-color','seg-textalign','btn-el-front','btn-el-back']
+      .filter(id => !!document.getElementById(id)),
+  };
+})()`);
+check('第二行存在且是顶栏与工作区之间的独立一层',
+  ctxShape.exists && ctxShape.inTopbar === false && ctxShape.inInspector === false,
+  JSON.stringify(ctxShape));
+check('第二行紧贴在顶栏下方（不是浮在画布中间）',
+  ctxShape.barTop !== null && Math.abs(ctxShape.barTop - ctxShape.tbBottom) <= 1,
+  `第二行顶 ${ctxShape.barTop} / 顶栏底 ${ctxShape.tbBottom}`);
+check('高频控件在页面上都只有一个 id（没有右栏副本）',
+  ctxShape.dupIds.length === 0, JSON.stringify(ctxShape.dupIds));
+check('右栏长尾项一个没少', ctxShape.inspKeeps, JSON.stringify(ctxShape.inspKeeps));
+check('被并入第二行的重复控件已从右栏移除',
+  ctxShape.gone.length === 0, JSON.stringify(ctxShape.gone));
+
+/* 三态：没文档 / 无选区 / 选中元素 */
+const ctxNoSel = await ev(`(() => {
+  const g = id => { const e = document.getElementById(id);
+    return { hidden: e.hidden, w: Math.round(e.getBoundingClientRect().width) }; };
+  return { bar: g('ctx-bar'), slide: g('ctx-slide'), el: g('ctx-el'), fmt: g('fmt-group') };
+})()`);
+check('有文档、无选区 → 第二行只显示页面组',
+  ctxNoSel.bar.hidden === false && ctxNoSel.slide.hidden === false &&
+  ctxNoSel.el.hidden === true && ctxNoSel.fmt.hidden === true,
+  JSON.stringify(ctxNoSel));
+/* 真的选中一个带文字的元素再看 —— 上一版忘了选就断言「元素组出现」，
+   量到的其实是未选中态，等于把 page 组的形状当 element 组断言。 */
+await ev(`(() => {
+  const I = WD.app._internal, doc = WD.app.E.stage.getDoc();
+  I.setSelection([doc.querySelector('h1')]); I.updateInspector(); I.refreshOverlay();
+  return true;
+})()`);
+await sleep(500);
+const ctxSel = await ev(`(() => {
+  const g = id => { const e = document.getElementById(id);
+    return { hidden: e.hidden, w: Math.round(e.getBoundingClientRect().width) }; };
+  return { slide: g('ctx-slide'), el: g('ctx-el'), fmt: g('fmt-group'),
+           kind: document.getElementById('el-kind').textContent };
+})()`);
+check('选中文字元素 → 页面组让位，元素组与文字组同时出现',
+  ctxSel.slide.hidden === true &&
+  ctxSel.el.hidden === false && ctxSel.el.w > 0 &&
+  ctxSel.fmt.hidden === false && ctxSel.fmt.w > 0,
+  JSON.stringify(ctxSel));
+check('第二行左端标签跟着显示成元素类型', ctxSel.kind && ctxSel.kind !== '元素', ctxSel.kind);
+/* 最宽一态（表格：元素组 + 表格 4 键 + 文字组）的溢出量在 [C] 末尾量 ——
+   插表格会改文档、置脏位，插在中段会把后面「未编辑时胶囊没有点」那条打穿。 */
+
+/* 放映按钮已从顶栏挪到底部状态条，且只在载入 HTML 之后出现 */
+console.log('\n[A2] 放映按钮：已移出顶栏，落在底部状态条');
+check('未载入文档时放映按钮是隐藏的',
+  presEmpty.missing === false && presEmpty.hiddenAttr === true && presEmpty.display === 'none',
+  JSON.stringify(presEmpty));
+check('空状态遮罩此刻确实可见（说明「没文档」这一态成立）', presEmpty.barEmptyHidden === false,
+  JSON.stringify(presEmpty));
+const pres = await ev(`(() => {
+  const b = document.getElementById('btn-present');
+  if (!b) return { missing: true };
+  const tb = document.querySelector('.topbar');
+  const bar = document.getElementById('stage-bar');
+  const r = b.getBoundingClientRect();
+  const cs = getComputedStyle(b);
+  return {
+    missing: false,
+    inTopbar: tb.contains(b),
+    inStageBar: bar.contains(b),
+    hiddenAttr: b.hidden,
+    display: cs.display,
+    w: Math.round(r.width), h: Math.round(r.height),
+    iconW: Math.round(b.querySelector('svg.ic').getBoundingClientRect().width),
+    label: b.querySelector('span').textContent.trim(),
+    barBottom: Math.round(bar.getBoundingClientRect().bottom),
+    btnBottom: Math.round(r.bottom),
+  };
+})()`);
+check('放映按钮仍在 DOM 里（只是换了位置）', pres.missing === false, JSON.stringify(pres));
+check('放映按钮已不在顶栏内', pres.inTopbar === false, JSON.stringify(pres));
+check('放映按钮位于底部状态条内', pres.inStageBar === true, JSON.stringify(pres));
+check('载入文档后放映按钮可见', pres.hiddenAttr === false && pres.display !== 'none',
+  `hidden=${pres.hiddenAttr} display=${pres.display}`);
+check('放映按钮仍在状态条高度内', pres.h > 0 && pres.h <= 32 && pres.btnBottom <= pres.barBottom,
+  `高 ${pres.h}px，底 ${pres.btnBottom} / 条底 ${pres.barBottom}`);
+
+const presAfter = await ev(`(() => {
+  const b = document.getElementById('btn-present');
+  const r = b.getBoundingClientRect();
+  const bar = document.getElementById('stage-bar').getBoundingClientRect();
+  const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return { w: Math.round(r.width), h: Math.round(r.height),
+           iconW: Math.round(b.querySelector('svg.ic').getBoundingClientRect().width),
+           label: b.querySelector('span').textContent.trim(),
+           hitSelf: top === b || b.contains(top), hitTag: top ? (top.id || top.tagName) : null,
+           fitsBar: r.right <= bar.right + 1 && r.bottom <= bar.bottom + 1 };
+})()`);
+check('放映按钮可见、可点、在状态条内', presAfter.w > 0 && presAfter.hitSelf && presAfter.fitsBar,
+  JSON.stringify(presAfter));
+check('放映按钮仍带图标 + 文字', presAfter.iconW > 0 && presAfter.label === '放映',
+  JSON.stringify(presAfter));
+await ev(`(() => { const b = document.getElementById('btn-present'); b.click(); return true; })()`);
+await sleep(500);
+const presenting = await ev(`(() => !document.getElementById('present').hidden)()`);
+check('底部按钮点得动，真能进放映', presenting === true, `present 遮罩 hidden=${!presenting}`);
+await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()`);
+await sleep(400);
 
 console.log('\n[B] 顶栏横向滚动 + 下拉不被裁剪');
 console.log('\n[B1] 下拉能反复开合（「只能下拉一次」的回归）');
@@ -194,6 +340,7 @@ console.log('\n[B2] 顶栏按钮增删');
       chipIdx: kids.indexOf(document.getElementById('file-chip')),
       brandIdx: kids.indexOf(document.querySelector('.brand')),
       undoIdx: kids.indexOf(document.getElementById('btn-undo').closest('.tb-group')),
+      saveIdx: kids.indexOf(document.getElementById('save-group')),
       fmtIdx: kids.indexOf(document.getElementById('fmt-group')),
     };
   })()`);
@@ -202,8 +349,11 @@ console.log('\n[B2] 顶栏按钮增删');
   check('「载入示例课件」按钮已删除', !t.hasSample2, String(t.hasSample2));
   check('独立的「有未保存修改」徽章已删除', !t.hasDirtyBadge, String(t.hasDirtyBadge));
   check('文件名胶囊仍在顶栏里', t.hasFileChip, JSON.stringify(t));
-  check('文件名胶囊位于撤销之后、文字格式条之前',
-    t.chipIdx > t.undoIdx && t.chipIdx < t.fmtIdx, JSON.stringify(t));
+  /* 文字格式条搬去了第二行，顶栏里不该再有它的位置（indexOf 会返回 -1）。
+     胶囊现在夹在「撤销」和「保存与导出」之间。 */
+  check('顶栏里已不再有文字格式条', t.fmtIdx === -1, JSON.stringify(t));
+  check('文件名胶囊位于撤销之后、保存与导出之前',
+    t.chipIdx > t.undoIdx && t.chipIdx < t.saveIdx, JSON.stringify(t));
   check('新增「图片」按钮', t.hasImage);
   check('新增「视频」按钮', t.hasVideo);
   check('视频文件选择器存在', t.videoInput);
@@ -342,6 +492,13 @@ console.log('\n[B2b] 未保存提示：文件名胶囊上那个点');
   check('★ 选中文字触发格式条时，点仍完整可见（内容盒 ≥ 点+间距）',
     squeezed.dotDisplay === 'none' || squeezed.contentBox >= squeezed.dotW + squeezed.gap + 0.5,
     JSON.stringify(squeezed));
+  /* 格式条搬去第二行之后，它再也不占顶栏的宽度了 ——
+     「选中文字就把顶栏挤到横向滚动」这个老毛病顺带没了。
+     这里的 squeezed.fmtShown 为真，说明此刻格式条确实是显示态，
+     所以 overflow === 0 才是有意义的断言，不是碰巧没选文字。 */
+  check('★ 选中文字时顶栏不再被挤到横向滚动（格式条已移出顶栏）',
+    squeezed.fmtShown === true && squeezed.overflow <= 0,
+    JSON.stringify(squeezed));
 }
 
 console.log('\n[B3] 顶栏横向滚动 + 下拉不被裁剪');{
@@ -419,6 +576,193 @@ const zoom = await send('Page.captureScreenshot', {
 });
 fs.writeFileSync(OUT.replace(/\.png$/, '-zoom.png'), Buffer.from(zoom.data, 'base64'));
 console.log('已保存', OUT.replace(/\.png$/, '-zoom.png'));
+
+/* ══ [C] 第二行的最宽一态 ══
+   必须排在最后：插表格会改文档、置脏位，放中段会把
+   「未编辑时胶囊没有点」那条断言打穿。
+   这一态内容最多——元素组 + 表格 4 键 + 文字组 11 个，
+   1600px 视口下只要溢出 1px，末尾的文字色按钮就被切掉。 */
+console.log('\n[C] 第二行：选中最宽的一态也不溢出');
+await ev(`(async () => {
+  document.getElementById('btn-insert-table').click();
+  await new Promise(r => setTimeout(r, 500));
+  document.getElementById('tbl-r').value = '3';
+  document.getElementById('tbl-c').value = '3';
+  await new Promise(r => setTimeout(r, 150));
+  const ok = Array.from(document.querySelectorAll('#modal-foot .btn'))
+    .find(b => b.textContent.trim() === '插入');
+  if (ok) ok.click();
+  await new Promise(r => setTimeout(r, 900));
+  return true;
+})()`);
+await sleep(700);
+const ctxWide = await ev(`(() => {
+  const bar = document.getElementById('ctx-bar');
+  const tt = document.getElementById('tbl-tools');
+  const r = tt.getBoundingClientRect();
+  const color = document.getElementById('fmt-color').getBoundingClientRect();
+  return { overflow: bar.scrollWidth - bar.clientWidth,
+           tblVisible: !tt.hidden && r.width > 0, tblW: Math.round(r.width),
+           colorRight: Math.round(color.right), vw: window.innerWidth,
+           kind: document.getElementById('el-kind').textContent };
+})()`);
+check('选中表格时，表格专属的 ＋行－行＋列－列出现在第二行', ctxWide.tblVisible, JSON.stringify(ctxWide));
+check('第二行左端标签跟着显示成「表格」', ctxWide.kind === '表格', ctxWide.kind);
+check('★ 最宽的一态也不溢出 1600px 视口',
+  ctxWide.overflow <= 0, `溢出 ${ctxWide.overflow}px / 视口 ${ctxWide.vw}`);
+check('★ 末尾的文字色按钮完整落在视口内',
+  ctxWide.colorRight <= ctxWide.vw, `右缘 ${ctxWide.colorRight} / 视口 ${ctxWide.vw}`);
+
+const ctxShot = await send('Page.captureScreenshot', { format: 'png' });
+fs.writeFileSync('tmp/topbar-ctx.png', Buffer.from(ctxShot.data, 'base64'));
+console.log('已保存 tmp/topbar-ctx.png');
+
+/* ══ [D] 放映：整页必须完整落在屏幕内 ══
+   坑：.present iframe 原来写的是 inset:0 + 固定 1920×1080。
+   inset:0 与显式 width 同时存在时 right/bottom 会被忽略，元素落在 (0,0)，
+   再配 transform-origin:center —— 缩放绕的是**它自己**的中心 (960,540)，
+   而那个点只有在视口恰好也是 1920×1080 时才等于视口中心。
+   于是其余任何分辨率下画布都偏出屏幕：实测 1366×768 右侧裁掉 276px、
+   底部裁掉 156px，近五分之一的画面根本不在屏幕内。 */
+console.log('\n[D] 放映：各分辨率下整页都在屏幕内且居中');
+await ev(`document.getElementById('btn-present').click()`);
+await sleep(1200);
+for (const [w, h] of [[1920, 1080], [1600, 950], [1440, 900], [1366, 768], [1280, 800], [2560, 1440]]) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+  await ev(`window.dispatchEvent(new Event('resize'))`);
+  await sleep(350);
+  const m = await ev(`(() => {
+    const f = document.getElementById('present-frame').getBoundingClientRect();
+    return { w: Math.round(f.width), h: Math.round(f.height), vw: innerWidth, vh: innerHeight,
+             over: [Math.max(0, -f.left), Math.max(0, -f.top),
+                    Math.max(0, f.right - innerWidth), Math.max(0, f.bottom - innerHeight)].map(Math.round),
+             dxc: Math.round(f.left + f.width / 2 - innerWidth / 2) };
+  })()`);
+  check(`${w}×${h} 整页都在屏幕内（左/上/右/下溢出都为 0）`, m.over.every((v) => v <= 0), JSON.stringify(m));
+  check(`${w}×${h} 水平居中（偏差 ≤1px）`, Math.abs(m.dxc) <= 1, `偏差 ${m.dxc}px`);
+  check(`${w}×${h} 保持 16:9 不被拉伸`, Math.abs(m.w / m.h - 16 / 9) < 0.01,
+    `${m.w}×${m.h} = ${(m.w / m.h).toFixed(3)}`);
+}
+
+/* 备注面板是从底部盖上来的：展开时画布必须上移让位，
+   否则演示时那几行备注正好压在幻灯片最下面一行字上。
+   只缩不放是不够的 —— 画布仍按整屏居中时，缩对了底部仍会被压住 18px。 */
+console.log('\n[D2] 放映：展开备注时画布让位，不被盖住');
+for (const [w, h] of [[1920, 1080], [1366, 768]]) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+  await ev(`window.dispatchEvent(new Event('resize'))`);
+  await sleep(300);
+  await ev(`(() => { if (document.getElementById('present-notes').hidden)
+                        document.getElementById('present-notes-btn').click(); return true; })()`);
+  await sleep(400);
+  const m = await ev(`(() => {
+    const f = document.getElementById('present-frame').getBoundingClientRect();
+    const n = document.getElementById('present-notes').getBoundingClientRect();
+    return { notesH: Math.round(n.height), cover: Math.round(Math.max(0, f.bottom - n.top)),
+             overR: Math.round(Math.max(0, f.right - innerWidth)), vw: innerWidth };
+  })()`);
+  check(`${w}×${h} 备注展开后画布不被备注盖住`, m.cover === 0, `备注高 ${m.notesH}px，被盖 ${m.cover}px`);
+  check(`${w}×${h} 备注展开后画布仍在屏幕内`, m.overR === 0, `右侧溢出 ${m.overR}px`);
+  await ev(`document.getElementById('present-notes-btn').click()`);
+  await sleep(250);
+}
+await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()`);
+await sleep(400);
+check('Esc 能退出放映', (await ev(`document.getElementById('present').hidden`)) === true);
+
+/* ══ [E] 按钮手感：全应用逐个量，发现「不统一」而不是「不好看」 ══
+   手感问题最容易被说成「不流畅」却又说不清具体哪儿不对。
+   能量出来的只有三件事：命中区够不够大、过渡时长是不是只有一种、
+   控件是不是都有 title。三项都是硬指标，能进回归。 */
+console.log('\n[E] 按钮手感：命中区 / 过渡时长一致性');
+await ev(`(() => {
+  const I = WD.app._internal, doc = WD.app.E.stage.getDoc();
+  I.setSelection([doc.querySelector('h1')]); I.updateInspector(); I.refreshOverlay();
+  return true;
+})()`);
+await sleep(600);
+const feel = await ev(`(() => {
+  const visible = Array.from(document.querySelectorAll('button')).filter((b) => {
+    const cs = getComputedStyle(b), r = b.getBoundingClientRect();
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+  });
+  const durs = {};
+  const zeroDur = [];
+  const tooSmall = [];
+  let noCursor = 0, noTitle = 0;
+  for (const b of visible) {
+    const cs = getComputedStyle(b), r = b.getBoundingClientRect();
+    if (!/pointer|not-allowed/.test(cs.cursor)) noCursor++;
+    if (!(b.textContent || '').trim() && !b.getAttribute('title')) noTitle++;
+    /* 贴边拉手是 20×52 的竖条，缩略图上的操作键是 26px，
+       都不按 24px 这条线量 —— 它们另有存在理由。
+       容差 0.5px：aspect-ratio / flex 算出来常是 23.99 这种值，不是真的偏小。 */
+    const isEdgeTab = b.classList.contains('panel-collapse');
+    if (!isEdgeTab && (r.height < 23.5 || r.width < 23.5)) {
+      tooSmall.push((b.id || b.className) + ' ' + Math.round(r.width) + '×' + Math.round(r.height));
+    }
+    if (cs.transitionProperty && cs.transitionProperty !== 'none') {
+      const d = cs.transitionDuration.split(',')[0].trim();
+      durs[d] = (durs[d] || 0) + 1;
+      if (d === '0s') zeroDur.push((b.id || b.className) + '@' + b.parentElement.className);
+    }
+  }
+  return { total: visible.length, durs, tooSmall, zeroDur, noCursor, noTitle };
+})()`);
+console.log('  ' + JSON.stringify({ total: feel.total, durs: feel.durs, zeroDur: feel.zeroDur }));
+check('★ 所有可见按钮的光标都是 pointer / not-allowed', feel.noCursor === 0, `${feel.noCursor} 个不是`);
+check('★ 纯图标按钮都有 title（悬停有解释）', feel.noTitle === 0, `${feel.noTitle} 个缺 title`);
+check('★ 按钮命中区都 ≥ 24×24（贴边拉手除外）', feel.tooSmall.length === 0,
+  JSON.stringify(feel.tooSmall.slice(0, 8)));
+/* 之前散着 0.1/0.12/0.13/0.15/0.16/0.18 共 7 种，界面上不同部位应答快慢不一。
+   现在统一到 --dur，回归就盯「只有一种」。 */
+const durKeys = Object.keys(feel.durs);
+check('★ 全应用按钮的过渡时长只有一种（点下去快慢一致）',
+  durKeys.length === 1 && durKeys[0] === '0.14s', JSON.stringify(feel.durs));
+
+console.log('\n[E2] 放映：鼠标也能前后翻页');
+await ev(`document.getElementById('btn-present').click()`);
+await sleep(1200);
+const nav = await ev(`(() => ({
+  prev: !!document.getElementById('present-prev'),
+  next: !!document.getElementById('present-next'),
+  fs: !!document.getElementById('present-fs'),
+  prevDisabled: document.getElementById('present-prev').disabled,
+  pos: document.getElementById('present-pos').textContent.trim(),
+  hasTitle: ['present-prev','present-next','present-fs']
+    .every(id => !!document.getElementById(id).getAttribute('title')),
+}))()`);
+check('HUD 上有「上一页 / 下一页 / 全屏」三个按钮', nav.prev && nav.next && nav.fs, JSON.stringify(nav));
+check('这三个按钮都有 title', nav.hasTitle, JSON.stringify(nav));
+check('第一页时「上一页」是禁用态（不给点了没反应的按钮）', nav.prevDisabled === true, JSON.stringify(nav));
+const afterNext = await ev(`(() => { document.getElementById('present-next').click();
+  return document.getElementById('present-pos').textContent.trim(); })()`);
+check('点「下一页」真的翻页了', afterNext !== nav.pos, `${nav.pos} → ${afterNext}`);
+await ev(`document.getElementById('present-prev').click()`);
+await sleep(500);
+const afterPrev = await ev(`document.getElementById('present-pos').textContent.trim()`);
+check('点「上一页」能翻回去', afterPrev === nav.pos, `${afterNext} → ${afterPrev}`);
+const lastPage = await ev(`(() => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  return new Promise(r => setTimeout(() => r({
+    pos: document.getElementById('present-pos').textContent.trim(),
+    nextDisabled: document.getElementById('present-next').disabled }), 600));
+})()`);
+check('End 跳到最后一页，且「下一页」变禁用', lastPage.nextDisabled === true, JSON.stringify(lastPage));
+await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
+await sleep(600);
+check('Home 跳回第一页',
+  (await ev(`document.getElementById('present-pos').textContent.trim()`)) === nav.pos);
+/* 全屏在这个无头环境里通常被拒绝，所以只验「按钮存在且不抛异常」，
+   真正验「进没进全屏」要靠有头环境，不适合塞进回归。 */
+const fsSafe = await ev(`(() => { try {
+  document.getElementById('present-fs').click();
+  return { threw: false, fsElement: !!document.fullscreenElement };
+} catch (e) { return { threw: true, msg: String(e) }; } })()`);
+check('点「全屏」不抛异常（无头环境可能被浏览器拒绝，属正常）', fsSafe.threw === false, JSON.stringify(fsSafe));
+await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()`);
+await sleep(500);
+check('Esc 能退出放映（HUD 隐藏后也一样）', (await ev(`document.getElementById('present').hidden`)) === true);
 
 console.log('\n=== ' + pass + ' 通过 / ' + fail + ' 失败 ===');
 if (bad.length) { console.log('失败项:'); bad.forEach((b) => console.log('  - ' + b)); }

@@ -2363,6 +2363,8 @@
     E.editing = null;
     /* 有内容时要收起空状态遮罩，否则它盖在舞台上方 */
     $('stage-empty').hidden = true;
+    /* 底部状态条的「放映」按钮同理：没有文档可放映时不出现 */
+    $('btn-present').hidden = false;
     return E.stage.setHtml(slide.doc).then(function () {
       if (token !== loadingToken) return;
       bindFrameEvents();
@@ -2679,11 +2681,7 @@
     $('sec-element').hidden = !hasSel;
     $('sec-empty').hidden = hasSel || !hasModel;
     $('insp-title').textContent = hasSel ? '元素属性' : '幻灯片属性';
-    /* 表格工具条只在选中表格时出现 */
-    var tt = $('tbl-tools');
-    if (tt) {
-      tt.hidden = !(hasSel && E.selection[0] && E.selection[0].tagName === 'TABLE');
-    }
+    updateCtxBar(hasModel, hasSel);
     updateFormatBar();
 
     /* 幻灯片区 */
@@ -2705,6 +2703,26 @@
 
     if (hasSel) updateInspectorValues();
     updateHistoryButtons();
+  }
+
+  /* 第二行上下文操作栏：跟着选区换内容。
+     和右栏共用同一批控件节点，所以这里只管「显不显示」，不管「显示什么值」——
+     值一律由 updateInspectorValues() 写，两边永远一致。 */
+  function updateCtxBar(hasModel, hasSel) {
+    var bar = $('ctx-bar');
+    if (!bar) return;
+    /* 整条栏跟着「有没有文档」走：没有文档时第二行没有任何可操作的东西，
+       留一条空行只会把画布往下推。 */
+    bar.hidden = !hasModel;
+    $('ctx-slide').hidden = hasSel;
+    $('ctx-el').hidden = !hasSel;
+    if (!hasSel) return;
+    /* 表格专属的行列增删：只有真的选中表格时才有意义 */
+    var isTable = !!(E.selection[0] && E.selection[0].tagName === 'TABLE');
+    var tt = $('tbl-tools');
+    if (tt) tt.hidden = !isTable;
+    var sep = $('ctx-sep-table');
+    if (sep) sep.hidden = !isTable;
   }
 
   function slideBackground() {
@@ -2768,7 +2786,9 @@
     }
     if (document.activeElement !== fsel) fsel.value = fam || '';
 
-    if (document.activeElement !== $('f-font-size')) $('f-font-size').value = U.round(U.parsePx(cs.fontSize, 16), 1);
+    /* 字号不再回写右栏输入框：它已经并进第二行的 fmt 组，
+       那里由 updateFormatBar() 写 #fmt-size-label。
+       留着这行会直接读 null 的 .value，一进编辑器就抛。 */
     if (document.activeElement !== $('f-line-height')) {
       $('f-line-height').value = cs.lineHeight === 'normal' ? '' : U.round(U.parsePx(cs.lineHeight, 0) || 0, 1);
     }
@@ -2783,7 +2803,7 @@
     }
 
     markSeg('seg-weight', 'weight', String(U.parseFontWeight(cs.fontWeight)));
-    markSeg('seg-textalign', 'ta', cs.textAlign || 'left');
+    /* 文字对齐的第二行按钮由 updateFormatBar() 负责点亮（那里已经读 textAlign） */
   }
 
   function setColorField(prefix, color, bgImage) {
@@ -3062,13 +3082,8 @@
         styleChanged('font-family', stack, '修改字体');
       }
     });
-    $('f-font-size').addEventListener('change', function () {
-      var v = parseFloat(this.value);
-      if (isNaN(v) || v < 1) { updateInspectorValues(); return; }
-      styleChanged('font-size', v + 'px', '修改字号');
-    });
-    $('btn-font-dec').addEventListener('click', function () { nudgeFont(-2); });
-    $('btn-font-inc').addEventListener('click', function () { nudgeFont(2); });
+    /* 字号 / 文字对齐 / 文字色已并入第二行的 fmt 组（原顶栏那一段），
+       右栏不再重复一份 —— 两处同名控件意味着两套状态。 */
 
     $('f-line-height').addEventListener('change', function () {
       var v = parseFloat(this.value);
@@ -3095,13 +3110,6 @@
     });
     $('f-opacity').addEventListener('change', function () { commit('修改透明度'); });
 
-    /* 段落对齐 */
-    $$('#seg-textalign .seg-btn').forEach(function (b) {
-      b.addEventListener('click', function () {
-        styleChanged('text-align', b.getAttribute('data-ta'), '修改对齐');
-        updateInspectorValues();
-      });
-    });
     /* 字重 */
     $$('#seg-weight .seg-btn').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -3120,15 +3128,17 @@
         var kind = b.getAttribute('data-clear');
         if (kind === 'slideBg') clearSlideBackground();
         else if (kind === 'fill') styleChanged('background', '', '清除填充');
-        else if (kind === 'color') styleChanged('color', '', '清除文字色');
+        /* 「清除文字色」那个按钮随文字色一起去到第二行 fmt 组了，
+           文字色改由 fmt-color-input 直接取色，没有独立的「清空」动作。 */
       });
     });
 
     /* 元素操作 */
     $('btn-el-dup').addEventListener('click', duplicateSelection);
     $('btn-el-del').addEventListener('click', deleteSelection);
-    $('btn-el-front').addEventListener('click', function () { layerAction('front'); });
-    $('btn-el-back').addEventListener('click', function () { layerAction('back'); });
+    /* 置顶 / 置底原在元素属性段里另有一份（#btn-el-front/back），
+       与图层段的 #btn-layer-front/back 调用的是同一个 layerAction()。
+       第二行只留图层这一份，免得同一条里出现两个「置顶」。 */
     $('btn-el-group').addEventListener('click', groupSelection);
     $('btn-el-ungroup').addEventListener('click', ungroupSelection);
 
@@ -3417,6 +3427,7 @@
     $('fmt-align-left').classList.toggle('on', align === 'left' || align === 'start');
     $('fmt-align-center').classList.toggle('on', align === 'center');
     $('fmt-align-right').classList.toggle('on', align === 'right' || align === 'end');
+    $('fmt-align-justify').classList.toggle('on', align === 'justify');
 
     var px = currentFontPx();
     $('fmt-size-label').textContent = Math.round(px) + 'px';
@@ -3457,7 +3468,7 @@
     $('fmt-size-dec').addEventListener('click', function () { nudgeFont(-2); updateFormatBar(); });
     $('fmt-size-inc').addEventListener('click', function () { nudgeFont(2); updateFormatBar(); });
 
-    ['left', 'center', 'right'].forEach(function (a) {
+    ['left', 'center', 'right', 'justify'].forEach(function (a) {
       $('fmt-align-' + a).addEventListener('click', function () {
         styleChanged('text-align', a, '对齐方式');
         updateFormatBar();
@@ -3537,6 +3548,7 @@
     }
     document.title = (deck.title || '未命名演示') + ' · 智演引擎 WizDeck';
     $('stage-empty').hidden = true;
+    $('btn-present').hidden = false;
     renderRail();
     initFontOptions();
     loadStage().then(function () {
@@ -3679,6 +3691,18 @@
      ══════════════════════════════════════════════════════════════════════ */
 
   var presentIndex = 0;
+  var prevBtn = null, nextBtn = null, fsBtn = null;
+
+  /* HUD 自动隐藏：演示时画面右下角不该有条控制栏，
+     但它又必须「一挪鼠标就出现」—— 这是演示软件的通行做法。 */
+  var hudTimer = null;
+  function showHud() {
+    var h = document.querySelector('.present-hud');
+    if (!h || $('present').hidden) return;
+    h.classList.add('show');
+    if (hudTimer) clearTimeout(hudTimer);
+    hudTimer = setTimeout(function () { h.classList.remove('show'); }, 2500);
+  }
 
   function startPresent() {
     if (!store.model) { toast('还没有可放映的内容', 'warn'); return; }
@@ -3688,8 +3712,10 @@
     $('present').hidden = false;
     showPresentSlide(presentIndex);
     scalePresent();
+    showHud();
     window.addEventListener('resize', scalePresent);
     window.addEventListener('keydown', onPresentKey, true);
+    $('present').addEventListener('mousemove', showHud);
   }
 
   function showPresentSlide(i) {
@@ -3707,35 +3733,137 @@
     frame.srcdoc = slide.doc;
     $('present-pos').textContent = (i + 1) + ' / ' + store.count();
     $('present-notes').textContent = slide.notes || '（本页没有备注）';
+    /* 翻到头尾时把对应按钮置灰：不给一个「点了没反应」的按钮，
+       而是在禁用态上直接说明已经没有下一页了。 */
+    if (prevBtn) prevBtn.disabled = i <= 0;
+    if (nextBtn) nextBtn.disabled = i >= store.count() - 1;
+    /* 翻页时备注内容会变，长度不同、面板高度也不同 ——
+       下一行一长就会比刚才高，画布却不重新让位，于是底部又被压住。
+       所以每次翻页都要重算一次可用高度。 */
+    scalePresent();
   }
+
+  /* 翻页收敛到一处：键盘、按钮、点击全屏，三条路径共用，
+     边界钳位与按钮置灰不会在某个入口漏掉。 */
+  function goPresent(delta) {
+    var next = Math.max(0, Math.min(store.count() - 1, presentIndex + delta));
+    if (next === presentIndex) return;
+    presentIndex = next;
+    showPresentSlide(presentIndex);
+  }
+
+  /* 放映时的安全边距：留一点呼吸位，同时兜住浏览器自身可能吃掉的一两像素
+     （Windows 任务栏自动隐藏的动画、macOS 刘海、缩放取整）。
+     8px 视觉上几乎看不出来，但能保证「整页都在屏幕内」是硬保证而不是概率。 */
+  var PRESENT_PAD = 8;
 
   function scalePresent() {
     var frame = $('present-frame');
     if (!frame) return;
-    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
-    frame.style.transform = 'scale(' + s + ')';
+    var notes = $('present-notes');
+    /* 备注面板是从底部盖上来的（max-height 26vh）。不把它算进可用高度，
+       备注一展开就压住幻灯片底部 —— 演示时那几行字根本看不见。
+       面板是 hidden 时 offsetHeight 为 0，正好当「没占位」处理。 */
+    var notesH = (notes && !notes.hidden) ? notes.offsetHeight : 0;
+    var availW = Math.max(80, window.innerWidth - PRESENT_PAD * 2);
+    var availH = Math.max(60, window.innerHeight - PRESENT_PAD * 2 - notesH);
+    var s = Math.min(availW / W, availH / H);
+    /* 居中 + 缩放合成一个 transform：CSS 里是 translate(-50%,-50%) scale(1)，
+       这里只改 scale 的系数。顺序不能反 —— 先缩放再平移会让位移量也跟着缩。 */
+    frame.style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+    /* ★ 光缩不放是不行的：可用高度变了，可**中心**也得跟着变。
+       只缩不挪的话画布仍然按整屏居中，底部照样压在备注面板上
+       （实测备注高 51px 时，缩对了却仍被压住 18px）。
+       垂直中心 = (视口高 - 备注高) / 2 —— 两边的 PRESENT_PAD 正好抵消。
+       left 保持 50% 不动，横向不受备注影响。 */
+    frame.style.top = ((window.innerHeight - notesH) / 2) + 'px';
   }
+
+  /* 备注显隐会改变可用高度，必须重算，否则画布不会让位 */
+  function togglePresentNotes() {
+    var n = $('present-notes');
+    if (!n) return;
+    n.hidden = !n.hidden;
+    scalePresent();
+  }
+
+  /* 全屏：之前整份代码里一次 requestFullscreen 都没有，
+     所谓「放映」只是把幻灯片缩放进浏览器窗口 ——
+     标签栏、地址栏、书签栏、任务栏全都还占着地方。
+     演示时真正要的是「屏幕上只有这一页」。 */
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function toggleFullscreen() {
+    try {
+      if (isFullscreen()) {
+        var exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) {
+          var p = exit.call(document);
+          /* 这两个 API 返回 Promise，拒绝时（比如无用户手势、被策略拒绝）
+             若不接住就会变成未处理的 Promise 拒绝 ——
+             表现是控制台一条 Uncaught，而功能其实「按设计就是不进全屏」。 */
+          if (p && p.catch) p.catch(function () {});
+        }
+      } else {
+        var req = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+        if (req) {
+          var q = req.call(document.documentElement);
+          if (q && q.catch) q.catch(function () {});
+        }
+      }
+    } catch (e) { /* 某些环境（无手势、iframe 内）会抛，忽略即可 */ }
+  }
+
+  /* 进出全屏都要重量一次：视口尺寸变了，缩放系数和垂直中心都跟着变。 */
+  document.addEventListener('fullscreenchange', function () {
+    if ($('present').hidden) return;
+    scalePresent();
+    if (fsBtn) {
+      var on = isFullscreen();
+      fsBtn.textContent = on ? '退出全屏' : '全屏';
+      fsBtn.classList.toggle('on', on);
+    }
+  });
 
   function onPresentKey(ev) {
     if ($('present').hidden) return;
-    if (ev.key === 'Escape') { stopPresent(); ev.preventDefault(); return; }
+    /* Esc 分两级：先退全屏，再按一次才退放映。
+       浏览器在全屏下会自己吞掉 Esc（规范如此），所以这里要判断当前是不是全屏 ——
+       否则用户在全屏里按 Esc 会「什么都没发生」，得等浏览器先退全屏、
+       再按一次才退放映，中间没有提示，像是卡住了。 */
+    if (ev.key === 'Escape') {
+      if (isFullscreen()) { toggleFullscreen(); ev.preventDefault(); return; }
+      stopPresent(); ev.preventDefault(); return;
+    }
     if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') {
-      presentIndex = Math.min(store.count() - 1, presentIndex + 1);
-      showPresentSlide(presentIndex); ev.preventDefault();
+      goPresent(1); ev.preventDefault();
     } else if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') {
-      presentIndex = Math.max(0, presentIndex - 1);
-      showPresentSlide(presentIndex); ev.preventDefault();
+      goPresent(-1); ev.preventDefault();
+    } else if (ev.key === 'Home') {
+      goPresent(-store.count()); ev.preventDefault();
+    } else if (ev.key === 'End') {
+      goPresent(store.count()); ev.preventDefault();
     } else if (ev.key === 'n' || ev.key === 'N') {
-      var n = $('present-notes');
-      n.hidden = !n.hidden;
+      togglePresentNotes();
+    } else if (ev.key === 'f' || ev.key === 'F') {
+      toggleFullscreen(); ev.preventDefault();
     }
   }
 
   function stopPresent() {
+    /* 退出放映时必须把全屏一起退掉：不然用户会留在一个「全屏的浏览器」里，
+       面前只有黑色背景，工作台被藏在全屏层后面 —— 看起来像应用崩了。
+       fullscreenchange 里已经处理了「present 隐藏时不重量」，所以这里安全。 */
+    if (isFullscreen()) toggleFullscreen();
     $('present').hidden = true;
+    if (hudTimer) { clearTimeout(hudTimer); hudTimer = null; }
     window.removeEventListener('resize', scalePresent);
     window.removeEventListener('keydown', onPresentKey, true);
+    $('present').removeEventListener('mousemove', showHud);
     $('present-frame').src = 'about:blank';
+    if (fsBtn) { fsBtn.textContent = '全屏'; fsBtn.classList.remove('on'); }
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -3959,7 +4087,7 @@
       ['选择', '单击选中 · Shift+单击多选 · 空白处拖动框选 · Esc 取消'],
       ['移动', '拖动元素 · 方向键 1px · Shift+方向键 10px'],
       ['缩放 / 旋转', '拖四角手柄 · 拖顶部圆点旋转（按住 Shift 吸附 15°）'],
-      ['改文字', '双击元素直接编辑 · Esc 退出'],
+      ['改文字', '双击元素直接编辑 · Esc 或 Ctrl+Enter 退出'],
       ['复制删除', 'Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+D 再制 · Delete 删除'],
       ['层级', 'Ctrl+] 上移一层 · Ctrl+[ 下移一层'],
       ['历史', 'Ctrl+Z 撤销 · Ctrl+Shift+Z 重做'],
@@ -3968,6 +4096,7 @@
       ['查找', 'Ctrl+F 查找文字 · Enter 下一个 · Esc 关闭'],
       ['样式搬运', '顶栏格式刷：选中源元素后点它，再点目标元素'],
       ['面板', 'Ctrl+\\ 一键显隐两侧 · 也可以拖卡片边缘的拉手单独收起'],
+      ['放映', 'F5 进入 · ← → 或空格翻页 · Home/End 跳首页尾页 · N 备注 · F 全屏 · Esc 退全屏、再按退放映'],
       ['其他', 'Ctrl+O 打开 HTML · Ctrl+S 保存工程 · Ctrl+E 导出 PPTX · Ctrl+0 适合窗口'],
     ];
     var html = '<table class="shortcuts"><tbody>' + rows.map(function (r) {
@@ -3996,6 +4125,77 @@
     applyTheme(store.theme === 'dark' ? 'light' : 'dark');
   }
 
+  /* 面板折叠 / 展开时让舞台缩放**逐帧跟随** CSS 宽度过渡。
+     坑：以前 measure() 只在过渡开始前跑一次 + transitionend 收尾一次，
+     中间态画布始终停在旧尺寸；一旦过渡被 ResizeObserver 打断又补一次
+     measure，就会出现「先跳一半、再跳到底」的两段式抖动，用户主观感受
+     就是"PPT 放大不流畅"。改成 rAF 每帧重读 canvas rect,画布就跟着
+     面板同一条 cubic-bezier 曲线连续变化，视觉上是一次平滑的贴合。 */
+  var FOLLOW_MS = 260;           /* 覆盖 220ms 过渡 + 一点余量 */
+  var followRaf = 0;
+  var settleTimer = null;
+
+  function stopFollow() {
+    if (followRaf) { cancelAnimationFrame(followRaf); followRaf = 0; }
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+    if (E.stage) E.stage._animLock = false;
+    if (E.stage && E.stage.el) E.stage.el.classList.remove('stage-following');
+  }
+
+  function settleStage() {
+    stopFollow();
+    if (!E.stage) return;
+    var avail = E.stage.canvasEl.getBoundingClientRect();
+    E.stage._applyScale(avail.width, avail.height);
+    updateZoomLabel();
+    refreshOverlay();
+  }
+
+  function armSettleFallback() {
+    /* 兜底：后台标签页 rAF 会被挂起 / 浏览器没派发 transitionend 时
+       不能让画布永远停在中间态。340ms 覆盖 260ms 主动画 + 富余。 */
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(settleStage, 340);
+  }
+
+  function startFollow() {
+    if (!E.stage) return;
+    if (followRaf) cancelAnimationFrame(followRaf);
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+    E.stage._animLock = true;
+    E.stage.el.classList.add('stage-following');
+    var start = performance.now();
+    function tick(now) {
+      if (!E.stage) { followRaf = 0; return; }
+      var avail = E.stage.canvasEl.getBoundingClientRect();
+      E.stage._applyScale(avail.width, avail.height);
+      updateZoomLabel();
+      if (now - start < FOLLOW_MS) {
+        followRaf = requestAnimationFrame(tick);
+      } else {
+        followRaf = 0;
+        E.stage._animLock = false;
+        E.stage.el.classList.remove('stage-following');
+        /* 收尾再对齐一次,吃掉 CSS 过渡最后几帧的舍入误差 */
+        var r2 = E.stage.canvasEl.getBoundingClientRect();
+        E.stage._applyScale(r2.width, r2.height);
+        updateZoomLabel();
+        refreshOverlay();
+      }
+    }
+    followRaf = requestAnimationFrame(tick);
+    armSettleFallback();
+  }
+
+  /* transitionend 只在 rAF 循环没跑起来时才作为兜底收尾。
+     循环自己会在 FOLLOW_MS 后干净结束,不需要额外触发。 */
+  document.addEventListener('transitionend', function (e) {
+    if (e.propertyName !== 'width') return;
+    if (e.target !== $('sidebar') && e.target !== $('inspector')) return;
+    if (followRaf) return;         /* 循环正在跑, 别抢 */
+    settleStage();
+  });
+
   /* 折叠 / 展开左右面板，并同步浮动拉手与顶栏按钮的状态 */
   function setPanelCollapsed(which, collapsed) {
     var panel = $(which === 'sidebar' ? 'sidebar' : 'inspector');
@@ -4009,12 +4209,7 @@
       ? (which === 'sidebar' ? '⟩' : '⟨')
       : (which === 'sidebar' ? '⟨' : '⟩');
 
-    /* 面板宽度变了，舞台可用空间随之变化，必须重新量一次并刷新选择框 */
-    setTimeout(function () {
-      E.stage.measure();
-      updateZoomLabel();
-      refreshOverlay();
-    }, 60);
+    startFollow();
   }
 
   function init() {
@@ -4167,14 +4362,16 @@
     $('modal-close').addEventListener('click', hideModal);
     $('modal').addEventListener('click', function (ev) { if (ev.target === $('modal')) hideModal(); });
     $('present-exit').addEventListener('click', stopPresent);
-    $('present-notes-btn').addEventListener('click', function () {
-      var n = $('present-notes');
-      n.hidden = !n.hidden;
-    });
+    $('present-notes-btn').addEventListener('click', togglePresentNotes);
+    prevBtn = $('present-prev');
+    nextBtn = $('present-next');
+    fsBtn = $('present-fs');
+    if (prevBtn) prevBtn.addEventListener('click', function () { goPresent(-1); });
+    if (nextBtn) nextBtn.addEventListener('click', function () { goPresent(1); });
+    if (fsBtn) fsBtn.addEventListener('click', toggleFullscreen);
     $('present').addEventListener('click', function (ev) {
       if (ev.target === $('present') || ev.target === $('present-frame')) {
-        presentIndex = Math.min(store.count() - 1, presentIndex + 1);
-        showPresentSlide(presentIndex);
+        goPresent(1);
       }
     });
 

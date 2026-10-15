@@ -81,6 +81,47 @@ stretches freely, and lines / arrows / double arrows lock their height (6 / 26 /
 handles that would be meaningless are hidden outright, rather than offering buttons that do
 nothing.
 
+### Second row: a contextual bar that follows the selection
+
+The first row of the top bar carries **fixed functions only** (new / insert / find / save /
+theme / help) and never jumps around. Right below it sits a **contextual bar** that swaps its
+contents with the selection:
+
+| Current state | What the second row shows |
+| --- | --- |
+| Nothing selected | `Slide` — layout, background |
+| An element is selected | `Element` — 8 align keys · X/Y/W/H/rotation · fill · up/down/front/back · duplicate/delete |
+| A table is selected | Adds `＋row −row ＋col −col` |
+| An element with text is selected | Adds `B I U · A− size A+ · text alignment · text colour` |
+| No document loaded | The whole bar hides — no empty row eating the canvas |
+
+The right panel therefore keeps only the **long tail**: the layer list, speaker notes, corner
+radius / border / font / weight / line height / letter spacing / opacity, swatches, group and
+ungroup, and custom CSS.
+
+**Each control exists in exactly one place** — text colour, font size, text alignment and
+front/back each used to exist twice; this round merged each pair into the second-row copy.
+Two copies of a control means two sources of state, and forgetting to update one is worse than
+not moving anything at all.
+
+### Button feel
+
+"Irresponsive" is often not a performance problem — it is **inconsistent transition durations**.
+An audit script measures every visible button in the app; it once found **7 different
+durations** (0.1 / 0.12 / 0.13 / 0.14 / 0.15 / 0.16 / 0.18) scattered around the stylesheet.
+Different parts of the interface then answer at different speeds — users can't say what's
+wrong, it just doesn't feel responsive. Everything now goes through one `--dur: .14s` token,
+and the 118 visible buttons converge to **a single duration**.
+
+Three hard metrics are guarded by the regression suite, so a regression turns them red:
+
+| Metric | Rule |
+| --- | --- |
+| Hit target | ≥ 24×24 (the 20×52 edge tab is a deliberate exception) |
+| Cursor | always `pointer` / `not-allowed` |
+| Hover hint | icon-only buttons must carry a `title` |
+| Transition duration | exactly **one** value app-wide |
+
 ### Editing
 
 - Drag / resize / rotate (`Shift` snaps to 15°); handles keep a constant on-screen size at
@@ -94,7 +135,9 @@ nothing.
 
 - **Export PPTX**: text, flat color blocks and images become real objects; gradients,
   shadows, rotations, SVG and other effects are baked into PNG images
-- **Presentation mode** (`F5`): keeps the original HTML animations
+- **Presentation mode** (`F5`): keeps the original HTML animations; the page is scaled
+  proportionally to the viewport and centred, so no part of the slide is ever cut off at
+  any resolution (the canvas also moves up to make room when speaker notes are shown)
 - **Dark theme**, live slide thumbnails
 
 ### Common shortcuts
@@ -111,6 +154,8 @@ nothing.
 | Fit to window / zoom | `Ctrl+0` / `Ctrl+±` |
 | Toggle both side panels | `Ctrl+\` |
 | Present / exit | `F5` / `Esc` |
+| Present: page / jump | `←` `→` or Space / `Home` `End` |
+| Present: notes / fullscreen | `N` / `F` (`Esc` leaves fullscreen first, then exits) |
 | Shortcut cheat sheet | `?` |
 
 ---
@@ -209,7 +254,7 @@ powershell -ExecutionPolicy Bypass -File tools/run-regressions.ps1
 > product bug but is an environment problem.
 > To run a subset use `-Command "& '.\tools\run-regressions.ps1' -Only @('a.mjs','b.mjs')"`.
 
-Current status: **12 suites · 471 assertions · 0 failures · zero console errors**.
+Current status: **12 suites · 522 assertions · 0 failures · zero console errors**.
 Every interaction assertion dispatches **real mouse and keyboard events** rather than calling
 internal functions directly.
 
@@ -219,8 +264,8 @@ internal functions directly.
 | `edit-test2.mjs` | 48 | Align, distribute, layers, marquee select, snap guides, right-click menu states, layer panel |
 | `cursor-test.mjs` | 27 | Cursor feedback, rotation, grab-point fidelity |
 | `textpos-test.mjs` | 23 | Text positioning accuracy, interaction feel, top-bar format bar |
-| `panel-test.mjs` | 20 | Panel collapse / expand (including "can you reopen it") |
-| `topbar-test.mjs` | 102 | Flat top bar, repeatable dropdown open/close, button changes, horizontal scroll, no clipping |
+| `panel-test.mjs` | 26 | Panel collapse / expand (including "can you reopen it"), animation settling, frame-by-frame follow is monotonic, zero writes after settling, content is never sliced in half |
+| `topbar-test.mjs` | 147 | Flat top bar, repeatable dropdown open/close, button changes, horizontal scroll, no clipping, present button relocated to the bottom, contextual second row: three states and the width budget, presentation mode fully visible at every resolution |
 | `video-test.mjs` | 20 | Builds a real WebM through the full insert path, poster is not black, survives reopening |
 | `ovbar-test.mjs` | 19 | Floating selection toolbar: constant screen size, counter-scale, no edge clipping |
 | `latex-test.mjs` | 37 | LaTeX → MathML parser (pure node, no browser) |

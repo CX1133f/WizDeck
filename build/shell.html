@@ -197,29 +197,6 @@
          文稿名和「它是不是最新」本来就是同一件事，分成两处反而要来回扫视。 -->
     <span class="file-chip" id="file-chip"></span>
 
-    <!-- 文字格式工具条：只在选中「有文字的块级元素」时出现。
-         bento 的设计是「功能在上方、操作在右侧」——常用的行内格式放在顶栏，
-         右侧面板继续承担完整的元素/页面属性与图层操作。 -->
-    <div class="tb-group fmt-group" id="fmt-group" hidden>
-      <span class="tb-sep"></span>
-      <button class="tb-btn is-sym fmt" id="fmt-bold" title="加粗 (Ctrl+B)"><b>B</b></button>
-      <button class="tb-btn is-sym fmt" id="fmt-italic" title="斜体 (Ctrl+I)"><i>I</i></button>
-      <button class="tb-btn is-sym fmt" id="fmt-underline" title="下划线 (Ctrl+U)"><u>U</u></button>
-      <span class="tb-sep"></span>
-      <button class="tb-btn is-sym fmt" id="fmt-size-dec" title="缩小字号">A−</button>
-      <span class="fmt-size" id="fmt-size-label">—</span>
-      <button class="tb-btn is-sym fmt" id="fmt-size-inc" title="放大字号">A+</button>
-      <span class="tb-sep"></span>
-      <button class="tb-btn is-sym fmt" id="fmt-align-left" title="左对齐">⇤</button>
-      <button class="tb-btn is-sym fmt" id="fmt-align-center" title="居中">⇔</button>
-      <button class="tb-btn is-sym fmt" id="fmt-align-right" title="右对齐">⇥</button>
-      <span class="tb-sep"></span>
-      <button class="tb-btn is-sym fmt" id="fmt-color" title="文字颜色" style="position:relative">
-        A<span class="fmt-color-bar" id="fmt-color-bar"></span>
-      </button>
-      <input type="color" id="fmt-color-input" value="#1e2a3a" class="fmt-color-input">
-    </div>
-
     <span class="tb-sep"></span>
 
     <!-- 保存与导出合并成一个按钮，点击后向下展开三个功能。 -->
@@ -233,11 +210,123 @@
     <span class="tb-sep"></span>
 
     <div class="tb-group">
-      <button class="tb-btn" id="btn-present" title="放映 (F5)"><svg class="ic" aria-hidden="true"><use href="#ic-present"/></svg><span>放映</span></button>
       <button class="tb-btn" id="btn-theme" title="切换深色 / 浅色"><svg class="ic" aria-hidden="true"><use href="#ic-theme"/></svg><span>主题</span></button>
       <button class="tb-btn" id="btn-help" title="使用说明"><svg class="ic" aria-hidden="true"><use href="#ic-help"/></svg><span>帮助</span></button>
     </div>
   </header>
+
+  <!-- ══ 第二行：上下文操作栏 ══════════════════════════════════════════════
+       右栏本来就随选区变（选中元素多出「元素属性」段），但它在视线右侧，
+       要来回扫。这里把**高频**那部分提到顶部第二行：换选区就换一组控件，
+       手不用离开鼠标附近。
+
+       关键：控件是「搬」过来的，不是复制一份。同一个 DOM 节点、同一个 id、
+       同一套 updateInspectorValues() 刷新。两份控件就意味着两套状态，
+       早晚会对不上 —— 而且改一个忘了改另一个，比不做还糟。
+       所以右栏不再重复这些项，只留长尾：图层列表、演讲备注、
+       圆角/边框/字体/字重/行高/字距/透明度、色板、组合解组、自定义 CSS。 -->
+  <div class="ctx-bar" id="ctx-bar" hidden>
+
+    <!-- ① 没选中任何元素 → 页面属性 -->
+    <div class="ctx-group" id="ctx-slide" hidden>
+      <span class="ctx-tag">幻灯片</span>
+      <span class="tb-sep"></span>
+      <label class="ctx-lbl" for="f-slide-layout">版式</label>
+      <select class="input sm" id="f-slide-layout">
+        <option value="blank">空白</option>
+        <option value="title">标题页</option>
+        <option value="section">章节页</option>
+        <option value="content">内容页</option>
+      </select>
+      <span class="tb-sep"></span>
+      <label class="ctx-lbl" for="f-slide-bg">背景</label>
+      <div class="color-field">
+        <input type="color" id="f-slide-bg" value="#ffffff">
+        <input type="text" class="input mono sm" id="f-slide-bg-text" spellcheck="false" maxlength="30">
+        <button class="mini-btn" data-clear="slideBg" title="清除（透明）">✕</button>
+      </div>
+    </div>
+
+    <!-- ② 选中元素 → 几何 / 填充 / 表格结构 / 图层顺序 -->
+    <div class="ctx-group" id="ctx-el" hidden>
+      <span class="ctx-tag"><span id="el-kind">元素</span><i class="ctx-tag-sub" id="el-tag"></i></span>
+      <span class="tb-sep"></span>
+
+      <div class="seg" id="seg-align">
+        <button class="seg-btn" data-align="left"   title="左对齐">⇤</button>
+        <button class="seg-btn" data-align="hcenter" title="水平居中">↔</button>
+        <button class="seg-btn" data-align="right"  title="右对齐">⇥</button>
+        <button class="seg-btn" data-align="top"    title="顶对齐">⤒</button>
+        <button class="seg-btn" data-align="vcenter" title="垂直居中">↕</button>
+        <button class="seg-btn" data-align="bottom" title="底对齐">⤓</button>
+        <button class="seg-btn" data-align="dist-h" title="水平分布">≡</button>
+        <button class="seg-btn" data-align="dist-v" title="垂直分布">⋮</button>
+      </div>
+
+      <span class="tb-sep"></span>
+
+      <div class="ctx-num"><label for="f-x">X</label><input class="input num sm" id="f-x" inputmode="decimal"></div>
+      <div class="ctx-num"><label for="f-y">Y</label><input class="input num sm" id="f-y" inputmode="decimal"></div>
+      <div class="ctx-num"><label for="f-w">宽</label><input class="input num sm" id="f-w" inputmode="decimal"></div>
+      <div class="ctx-num"><label for="f-h">高</label><input class="input num sm" id="f-h" inputmode="decimal"></div>
+      <div class="ctx-num"><label for="f-rot">旋转</label><input class="input num sm" id="f-rot" inputmode="decimal"></div>
+
+      <span class="tb-sep"></span>
+
+      <label class="ctx-lbl" for="f-fill">填充</label>
+      <div class="color-field">
+        <input type="color" id="f-fill" value="#ffffff">
+        <input type="text" class="input mono sm" id="f-fill-text" spellcheck="false" maxlength="40">
+        <button class="mini-btn" data-clear="fill" title="清除填充">✕</button>
+      </div>
+
+      <!-- 表格专属：表格是唯一要改「结构」而不只是改样式的元素，
+           没有这几个按钮，插入时定下的行列数就再也改不了了。 -->
+      <span class="tb-sep ctx-only-table" hidden id="ctx-sep-table"></span>
+      <div class="tbl-btns ctx-only-table" id="tbl-tools" hidden>
+        <button class="mini-btn" id="tbl-add-row" title="在下方加一行">＋行</button>
+        <button class="mini-btn" id="tbl-del-row" title="删掉最后一行">－行</button>
+        <button class="mini-btn" id="tbl-add-col" title="在右侧加一列">＋列</button>
+        <button class="mini-btn" id="tbl-del-col" title="删掉最后一列">－列</button>
+      </div>
+
+      <span class="tb-sep"></span>
+
+      <div class="ctx-btns">
+        <button class="mini-btn" id="btn-layer-up" title="上移一层 (Ctrl+])">上移</button>
+        <button class="mini-btn" id="btn-layer-down" title="下移一层 (Ctrl+[)">下移</button>
+        <button class="mini-btn" id="btn-layer-front" title="置顶">置顶</button>
+        <button class="mini-btn" id="btn-layer-back" title="置底">置底</button>
+      </div>
+      <div class="ctx-btns">
+        <button class="mini-btn" id="btn-el-dup" title="复制元素">复制</button>
+        <button class="mini-btn danger" id="btn-el-del" title="删除元素 (Delete)">删除</button>
+      </div>
+    </div>
+
+    <!-- ③ 选中有文字的元素 → 行内文字格式（原顶栏 fmt-group 整段搬来）。
+         顶栏第一行现在只剩固定功能，不再随选区跳变。 -->
+    <div class="ctx-group fmt-group" id="fmt-group" hidden>
+      <span class="tb-sep"></span>
+      <button class="tb-btn is-sym fmt" id="fmt-bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+      <button class="tb-btn is-sym fmt" id="fmt-italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+      <button class="tb-btn is-sym fmt" id="fmt-underline" title="下划线 (Ctrl+U)"><u>U</u></button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn is-sym fmt" id="fmt-size-dec" title="缩小字号">A−</button>
+      <span class="fmt-size" id="fmt-size-label">—</span>
+      <button class="tb-btn is-sym fmt" id="fmt-size-inc" title="放大字号">A+</button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn is-sym fmt" id="fmt-align-left" title="文字左对齐">⇤</button>
+      <button class="tb-btn is-sym fmt" id="fmt-align-center" title="文字居中">⇔</button>
+      <button class="tb-btn is-sym fmt" id="fmt-align-right" title="文字右对齐">⇥</button>
+      <button class="tb-btn is-sym fmt" id="fmt-align-justify" title="文字两端对齐">⇹</button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn is-sym fmt" id="fmt-color" title="文字颜色" style="position:relative">
+        A<span class="fmt-color-bar" id="fmt-color-bar"></span>
+      </button>
+      <input type="color" id="fmt-color-input" value="#1e2a3a" class="fmt-color-input">
+    </div>
+  </div>
 
   <!-- ══ 工作区 ══ -->
   <div class="workspace" id="workspace">
@@ -321,6 +410,10 @@
           <span class="zoom-label" id="zoom-label" title="点击回到 100%">—</span>
           <button class="btn" id="btn-zoom-in" title="放大">＋</button>
         </div>
+        <!-- 放映从顶栏挪到这里：它是「离开编辑、去演示」的动作，不是编辑入口，
+             放在状态条右端更合语义。默认 hidden，载入 HTML 后由 JS 显示 ——
+             没有文档时没什么可放映的。 -->
+        <button id="btn-present" title="放映 (F5)" hidden><svg class="ic" aria-hidden="true"><use href="#ic-present"/></svg><span>放映</span></button>
       </div>
     </main>
 
@@ -340,34 +433,13 @@
             <span class="sec-hint" id="layers-count"></span>
           </div>
           <div class="layer-list" id="layer-list"></div>
-          <div class="row-inline wrap gap">
-            <button class="btn tiny" id="btn-layer-up" title="上移一层 (Ctrl+])">上移一层</button>
-            <button class="btn tiny" id="btn-layer-down" title="下移一层 (Ctrl+[)">下移一层</button>
-            <button class="btn tiny" id="btn-layer-front">置顶</button>
-            <button class="btn tiny" id="btn-layer-back">置底</button>
-          </div>
         </section>
 
-        <!-- ── 幻灯片属性 ── -->
+        <!-- ── 幻灯片属性 ──
+             版式与背景色已提到顶部第二行（换页时最常改的两项）；
+             这里只留放不进工具条的长尾：背景图、备注、页面增删排序。 -->
         <section class="insp-sec" id="sec-slide">
           <div class="sec-title">页面</div>
-          <div class="field-row">
-            <label class="field-label">版式</label>
-            <select class="input" id="f-slide-layout">
-              <option value="blank">空白</option>
-              <option value="title">标题页</option>
-              <option value="section">章节页</option>
-              <option value="content">内容页</option>
-            </select>
-          </div>
-          <div class="field-row">
-            <label class="field-label">背景</label>
-            <div class="color-field">
-              <input type="color" id="f-slide-bg" value="#ffffff">
-              <input type="text" class="input mono" id="f-slide-bg-text" spellcheck="false" maxlength="30">
-              <button class="mini-btn" data-clear="slideBg" title="清除（透明）">✕</button>
-            </div>
-          </div>
           <div class="field-row">
             <label class="field-label">背景图</label>
             <div class="row-inline">
@@ -390,62 +462,13 @@
         <!-- ── 元素属性 ── -->
         <section class="insp-sec" id="sec-element" hidden>
           <div class="sec-title">
-            <span id="el-kind">元素</span>
-            <span class="sec-tag" id="el-tag"></span>
-          </div>
-
-          <div class="seg" id="seg-align">
-            <button class="seg-btn" data-align="left"   title="左对齐">⇤</button>
-            <button class="seg-btn" data-align="hcenter" title="水平居中">↔</button>
-            <button class="seg-btn" data-align="right"  title="右对齐">⇥</button>
-            <button class="seg-btn" data-align="top"    title="顶对齐">⤒</button>
-            <button class="seg-btn" data-align="vcenter" title="垂直居中">↕</button>
-            <button class="seg-btn" data-align="bottom" title="底对齐">⤓</button>
-            <button class="seg-btn" data-align="dist-h" title="水平分布">≡</button>
-            <button class="seg-btn" data-align="dist-v" title="垂直分布">⋮</button>
-          </div>
-
-          <div class="field-grid4">
-            <div class="fg-cell"><label>X</label><input class="input num" id="f-x" inputmode="decimal"></div>
-            <div class="fg-cell"><label>Y</label><input class="input num" id="f-y" inputmode="decimal"></div>
-            <div class="fg-cell"><label>宽</label><input class="input num" id="f-w" inputmode="decimal"></div>
-            <div class="fg-cell"><label>高</label><input class="input num" id="f-h" inputmode="decimal"></div>
-          </div>
-
-          <div class="field-grid2">
-            <div class="fg-cell"><label>旋转</label><input class="input num" id="f-rot" inputmode="decimal"></div>
-            <div class="fg-cell"><label>圆角</label><input class="input num" id="f-radius" inputmode="decimal"></div>
-          </div>
-
-          <!-- 表格专属：只有选中表格时才显示。
-               表格是唯一要改「结构」而不只是改样式的元素，
-               没有这几个按钮，插入时定下的行列数就再也改不了了。 -->
-          <div class="field-row tbl-tools" id="tbl-tools" hidden>
-            <label class="field-label">表格</label>
-            <div class="tbl-btns">
-              <button class="mini-btn" id="tbl-add-row" title="在下方加一行">＋行</button>
-              <button class="mini-btn" id="tbl-del-row" title="删掉最后一行">－行</button>
-              <button class="mini-btn" id="tbl-add-col" title="在右侧加一列">＋列</button>
-              <button class="mini-btn" id="tbl-del-col" title="删掉最后一列">－列</button>
-            </div>
+            元素
+            <span class="sec-hint">高频项已提到顶部第二行</span>
           </div>
 
           <div class="field-row">
-            <label class="field-label">填充</label>
-            <div class="color-field">
-              <input type="color" id="f-fill" value="#ffffff">
-              <input type="text" class="input mono" id="f-fill-text" spellcheck="false" maxlength="40">
-              <button class="mini-btn" data-clear="fill" title="清除填充">✕</button>
-            </div>
-          </div>
-
-          <div class="field-row">
-            <label class="field-label">文字色</label>
-            <div class="color-field">
-              <input type="color" id="f-color" value="#000000">
-              <input type="text" class="input mono" id="f-color-text" spellcheck="false" maxlength="40">
-              <button class="mini-btn" data-clear="color" title="清除文字色">✕</button>
-            </div>
+            <label class="field-label">圆角</label>
+            <input class="input num" id="f-radius" inputmode="decimal">
           </div>
 
           <div class="field-row">
@@ -470,16 +493,6 @@
           </div>
 
           <div class="field-row">
-            <label class="field-label">字号</label>
-            <div class="row-inline">
-              <input class="input num sm" id="f-font-size" inputmode="decimal">
-              <span class="unit">px</span>
-              <button class="mini-btn" id="btn-font-dec" title="减小字号">－</button>
-              <button class="mini-btn" id="btn-font-inc" title="增大字号">＋</button>
-            </div>
-          </div>
-
-          <div class="field-row">
             <label class="field-label">字重</label>
             <div class="seg compact" id="seg-weight">
               <button class="seg-btn" data-weight="300">细</button>
@@ -487,16 +500,6 @@
               <button class="seg-btn" data-weight="600">中粗</button>
               <button class="seg-btn" data-weight="800">粗</button>
               <button class="seg-btn" data-weight="900">特粗</button>
-            </div>
-          </div>
-
-          <div class="field-row">
-            <label class="field-label">对齐</label>
-            <div class="seg compact" id="seg-textalign">
-              <button class="seg-btn" data-ta="left">左</button>
-              <button class="seg-btn" data-ta="center">中</button>
-              <button class="seg-btn" data-ta="right">右</button>
-              <button class="seg-btn" data-ta="justify">两端</button>
             </div>
           </div>
 
@@ -528,12 +531,8 @@
           <div class="swatches" id="swatches"></div>
 
           <div class="row-inline wrap gap">
-            <button class="btn tiny" id="btn-el-dup">复制元素</button>
-            <button class="btn tiny" id="btn-el-front">置顶</button>
-            <button class="btn tiny" id="btn-el-back">置底</button>
             <button class="btn tiny" id="btn-el-group">组合</button>
             <button class="btn tiny" id="btn-el-ungroup">解组</button>
-            <button class="btn tiny danger" id="btn-el-del">删除元素</button>
           </div>
 
           <details class="adv">
@@ -613,9 +612,12 @@
 <div class="present" id="present" hidden>
   <iframe id="present-frame" title="放映"></iframe>
   <div class="present-hud">
+    <button class="mini-btn hud-btn" id="present-prev" title="上一页 (←)">‹</button>
     <span id="present-pos">1 / 1</span>
+    <button class="mini-btn hud-btn" id="present-next" title="下一页 (→ 或空格)">›</button>
     <span class="hud-sep"></span>
-    <button class="mini-btn hud-btn" id="present-notes-btn" title="备注">备注</button>
+    <button class="mini-btn hud-btn" id="present-notes-btn" title="备注 (N)">备注</button>
+    <button class="mini-btn hud-btn" id="present-fs" title="全屏 (F)">全屏</button>
     <button class="mini-btn hud-btn" id="present-exit" title="退出 (Esc)">✕</button>
   </div>
   <div class="present-notes" id="present-notes" hidden></div>

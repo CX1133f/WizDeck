@@ -26,6 +26,13 @@
   --radius:     10px;
   --radius-sm:  7px;
   --radius-lg:  14px;
+  /* 交互反馈的唯一时长。所有按钮 / 输入框的悬停、按下的过渡都必须走它。
+     坑：这份表曾经散着 0.1 / 0.12 / 0.13 / 0.14 / 0.15 / 0.16 / 0.18 共 7 种，
+     审计 120 个可见按钮时能直接量出这个分裂 ——
+     界面上不同部位「应答」的速度不一样，是最容易被说成「不流畅」但又说不清的东西。
+     面板宽度那条 0.22s 不算在内：它是**布局**位移，和反馈是两回事。 */
+  --dur:        .14s;
+  --dur-press:  .1s;
   --shadow-1:   0 1px 2px rgb(20 30 45 / .07), 0 4px 14px rgb(20 30 45 / .07);
   --shadow-2:   0 10px 34px rgb(20 30 45 / .16), 0 2px 8px rgb(20 30 45 / .07);
   --shadow-3:   0 26px 70px rgb(20 30 45 / .3);
@@ -138,9 +145,12 @@ html[data-theme="dark"] {
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .layer-btn {
-  flex: none; width: 19px; height: 19px; padding: 0;
+  /* 19px 是实测出来的「偏小」冠军：太小基本点不中，
+     而且它和旁边那一个挨得很近，误点成本高（锁错元素要再点一次解锁）。
+     24px 是「不用瞄准也能点到」的下限。 */
+  flex: none; width: 24px; height: 24px; padding: 0;
   display: grid; place-items: center;
-  border: 0; border-radius: 5px; background: transparent;
+  border: 0; border-radius: 6px; background: transparent;
   color: var(--muted); font-size: 11px; cursor: pointer;
 }
 .layer-btn:hover { background: var(--chrome-2); color: var(--ink); }
@@ -255,8 +265,8 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   border-radius: var(--radius-sm);
   color: var(--ink-2); font-size: 12.5px; font-weight: 500;
   cursor: pointer; white-space: nowrap;
-  transition: background-color .13s var(--ease), color .13s var(--ease),
-              transform .1s var(--ease), box-shadow .13s var(--ease);
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
+              transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .tb-btn .ic {
   width: 16px; height: 16px; flex-shrink: 0;
@@ -295,8 +305,8 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background .13s var(--ease), border-color .13s var(--ease),
-              transform .1s var(--ease), box-shadow .13s var(--ease);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .btn:hover:not(:disabled) { background: var(--chrome-2); border-color: var(--faint); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
@@ -358,18 +368,41 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   background: var(--surface);
   position: relative;
   z-index: 2;
-  transition: width .22s var(--ease);
+  /* border-width 也要一起过渡：它原本在第 0 帧就从 1px 瞬变成 0，
+     于是面板外框宽度先「啪」地掉 1px，再开始动画 —— 一个很小但看得见的顿挫。 */
+  transition: width .22s var(--ease), border-width .22s var(--ease);
 }
 .sidebar { width: var(--sidebar-w); border-right: 1px solid var(--line); }
 .inspector { width: var(--inspector-w); border-left: 1px solid var(--line); }
 
 .sidebar.collapsed, .inspector.collapsed { width: 0; border-width: 0; overflow: hidden; }
-.sidebar.collapsed .panel-head, .inspector.collapsed .panel-head { display: none; }
+
+/* 面板头原来在折叠时是 display:none —— 过渡还没开始它就没了，
+   于是动画第 0 帧「啪」地一下消失，而面板那会儿还有 190px 宽。
+   改成淡出，让它跟着面板一起被裁进去，观感是连续的。 */
+.sidebar.collapsed .panel-head, .inspector.collapsed .panel-head { opacity: 0; pointer-events: none; }
+
+/* ⚠️ 这里**曾经**给 .rail / .insp-body 加过 `width: var(--panel-w)` 把内容锁宽，
+   意图是让收起时只被裁掉、不逐帧重排。实测布局耗时确实降了（右栏 20.4ms → 4.2ms），
+   但那个数字是**整段 220ms 动画的累计值** —— 摊到 13 帧每帧才 1.6ms，省下的 16ms
+   每帧不到 0.1ms，肉眼根本看不出来。
+   代价却是实打实的：缩略图在收窄过程中被**从中间拦腰切断**，露出半截文字，
+   一眼就是「割裂感」（空轨道时没东西可切，所以看着反而顺，具有迷惑性）。
+   拿 0.1ms/帧 换一个用户能直接看见的视觉缺陷，亏得很，已回退。
+   内容宽度必须跟着面板一起变窄，让缩略图自然收缩。 */
+
+/* 收起按钮也要跟着淡出：它贴在面板**内侧**边缘（right:-1px），
+   收窄时会一路往左移动；而面板**外侧**的 .edge-tab 拉手在第 0 帧就出现了 ——
+   两者在动画中途并排站着，看着像多出来一个把手。 */
+.sidebar.collapsed > .panel-collapse,
+.inspector.collapsed > .panel-collapse { opacity: 0; pointer-events: none; }
 
 /* 收起按钮：贴在**卡片内侧边缘、上下居中**。
    原来它待在 .panel-head 右上角，既不在卡片上，位置也和视线落点不一致；
-   现在移到 .panel-head 之外，作为面板的直接子元素绝对定位，
-   这样折叠时不会被 .panel-head 的 display:none 一起带走。 */
+   现在移到 .panel-head 之外，作为面板的直接子元素绝对定位 ——
+   折叠时面板宽度归零、内容被 overflow 裁掉，这个按钮也跟着一起没了，
+   真正负责展开的是面板**外面**的 .edge-tab 拉手（见 shell.html 底部）。
+   正因如此，它必须待在 .panel-head 之外：头一旦淡出，按钮会跟着一起淡没了。 */
 .panel-collapse {
   position: absolute; top: 50%; margin-top: -26px;
   z-index: 6;
@@ -379,8 +412,9 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   background: var(--surface); color: var(--ink-2);
   font-size: 13px; line-height: 1; cursor: pointer;
   box-shadow: var(--shadow-1);
-  transition: background-color .18s var(--ease), color .18s var(--ease),
-              width .18s var(--ease), box-shadow .18s var(--ease);
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
+              width var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+              opacity var(--dur) var(--ease);
 }
 .sidebar > .panel-collapse { right: -1px; border-right: 0; border-radius: 10px 0 0 10px; }
 .inspector > .panel-collapse { left: -1px; border-left: 0; border-radius: 0 10px 10px 0; }
@@ -394,6 +428,7 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+  transition: opacity .14s var(--ease);
 }
 .panel-title { font-size: 12px; font-weight: 700; letter-spacing: .3px; color: var(--ink-2); }
 .panel-head-spacer { flex: 1; }
@@ -405,11 +440,11 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 }
 
 .mini-btn {
-  min-width: 22px; height: 22px; padding: 0 5px;
+  min-width: 24px; height: 24px; padding: 0 6px;
   border: 1px solid transparent; background: transparent;
-  border-radius: 5px; color: var(--muted); cursor: pointer;
+  border-radius: 6px; color: var(--muted); cursor: pointer;
   display: inline-grid; place-items: center; font-size: 12px; line-height: 1;
-  transition: background .12s, color .12s;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .mini-btn:hover { background: var(--chrome-2); color: var(--ink); }
 .mini-btn.active { background: var(--accent-soft); color: var(--accent-ink); border-color: rgb(247 166 0 / .3); }
@@ -472,14 +507,19 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 .rail-item.active .rail-num { background: var(--accent); color: var(--accent-on); }
 
 .rail-actions {
-  position: absolute; right: 4px; top: 4px; z-index: 3;
-  display: flex; gap: 3px; opacity: 0; transition: opacity .12s;
+  position: absolute; right: 5px; top: 5px; z-index: 3;
+  display: flex; gap: 4px; opacity: 0;
+  transition: opacity var(--dur) var(--ease);
 }
 .rail-item:hover .rail-actions { opacity: 1; }
+/* 缩略图上的「复制 / 删除」是鼠标唯一能碰到它们的地方（平时 opacity:0），
+   20px 太小了 —— 想复制时得把指针准确地停在那两个像素点上。
+   放到 26px，缩略图（144×81 级别）完全放得下。 */
 .rail-actions .mini-btn {
-  width: 20px; height: 20px; min-width: 20px;
-  background: rgb(255 255 255 / .9); border: 1px solid var(--line);
+  width: 26px; height: 26px; min-width: 26px;
+  background: rgb(255 255 255 / .92); border: 1px solid var(--line);
   color: var(--ink-2); backdrop-filter: blur(4px);
+  box-shadow: 0 1px 3px rgb(20 30 45 / .12);
 }
 .rail-actions .mini-btn:hover { background: #fff; color: var(--ink); }
 
@@ -527,6 +567,9 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   outline: 1px solid rgb(20 30 45 / .09);
   transform-origin: center center;
 }
+/* 面板折叠 rAF 循环期间把画布升到合成层, transform 逐帧改写走 GPU,
+   避免 1920×1080 iframe 每帧重新栅格化;循环结束后立刻撤掉,归还显存。 */
+.stage.stage-following { will-change: transform; }
 .stage iframe {
   position: absolute; inset: 0;
   width: 1920px; height: 1080px;
@@ -649,7 +692,9 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 
 /* ── 底部状态条 ── */
 .stage-bar {
-  height: 28px; flex-shrink: 0;
+  /* 28px 装不下 24px 的按钮（外框只剩 28px，按钮一撑就把边挤出去）。
+     抬到 32px：24px 按钮 + 上下各 4px，两条带子仍然是「薄薄一条」的手感。 */
+  height: 32px; flex-shrink: 0;
   display: flex; align-items: center; gap: 9px;
   padding: 0 14px;
   background: var(--surface);
@@ -662,6 +707,24 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 .sb-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--line-2); flex-shrink: 0; }
 #sb-sel { color: var(--ink-2); font-family: var(--mono-font); font-size: 11px; }
 #sb-hint { color: var(--faint); }
+
+/* 放映按钮（原先在顶栏，挪到状态条右端）：它是「离开编辑去演示」的动作，
+   放在 28px 高的状态条里要收着做，不能抢画面的视觉重心。 */
+#btn-present {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 11px; margin-left: 3px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2);
+  font-size: 11.5px; line-height: 1; white-space: nowrap;
+  cursor: pointer; flex-shrink: 0;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease);
+}
+#btn-present .ic { width: 12px; height: 12px; flex-shrink: 0; }
+#btn-present:hover { background: var(--blue); border-color: var(--blue); color: #fff; }
+#btn-present:active { transform: scale(.96); }
+/* 按钮用了 display:inline-flex，会盖掉 [hidden] 的默认 display:none —— 必须补一条。 */
+#btn-present[hidden] { display: none !important; }
 
 /* ══════════════════════════ 右栏：属性检查器 ══════════════════════════ */
 
@@ -691,7 +754,7 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   width: 100%; height: 29px; padding: 0 8px;
   border: 1px solid var(--line-2); background: var(--field);
   border-radius: 6px; font-size: 12px; color: var(--ink);
-  transition: border-color .12s, box-shadow .12s;
+  transition: border-color var(--dur), box-shadow var(--dur);
 }
 .input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgb(91 141 239 / .16); }
 .input.mono { font-family: var(--mono-font); font-size: 11.5px; }
@@ -735,7 +798,7 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
   border: 0; background: transparent; border-radius: 6px;
   color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500;
   display: grid; place-items: center;
-  transition: background .12s, color .12s;
+  transition: background var(--dur), color var(--dur);
 }
 .seg-btn:hover { color: var(--ink); background: rgb(255 255 255 / .6); }
 html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
@@ -754,7 +817,7 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
 .swatch {
   width: 100%; aspect-ratio: 1; padding: 0;
   border: 1px solid rgb(20 30 45 / .14); border-radius: 4px;
-  cursor: pointer; transition: transform .1s var(--ease), box-shadow .1s var(--ease);
+  cursor: pointer; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .swatch:hover { transform: scale(1.18); box-shadow: 0 2px 7px rgb(20 30 45 / .3); z-index: 2; }
 
@@ -802,7 +865,7 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
 .busy-mark { position: relative; width: 46px; height: 46px; border-radius: 12px; background: var(--ink); }
 .busy-mark i { position: absolute; border-radius: 2.5px; animation: busyPulse 1.15s ease-in-out infinite; }
 .busy-mark i:nth-child(1) { left: 8px;  top: 8px;  width: 11px; height: 30px; background: var(--accent); animation-delay: 0s; }
-.busy-mark i:nth-child(2) { left: 24px; top: 8px;  width: 14px; height: 13px; background: #fff; animation-delay: .16s; }
+.busy-mark i:nth-child(2) { left: 24px; top: 8px;  width: 14px; height: 13px; background: #fff; animation-delay: var(--dur); }
 .busy-mark i:nth-child(3) { left: 24px; top: 25px; width: 14px; height: 13px; background: var(--blue); animation-delay: .32s; }
 @keyframes busyPulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
 
@@ -836,7 +899,7 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
 .toast.ok    { border-left-color: var(--ok); }
 .toast.warn  { border-left-color: var(--accent); }
 .toast.error { border-left-color: var(--danger); }
-.toast.out { animation: toastOut .18s var(--ease) forwards; }
+.toast.out { animation: toastOut var(--dur) var(--ease) forwards; }
 @keyframes toastIn  { from { opacity: 0; transform: translateY(9px) scale(.97); } }
 @keyframes toastOut { to   { opacity: 0; transform: translateY(6px) scale(.98); } }
 .toast .t-ico { flex-shrink: 0; font-size: 13px; line-height: 1.4; }
@@ -847,7 +910,7 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
   position: fixed; inset: 0; z-index: 9200;
   display: grid; place-items: center;
   background: rgb(20 30 45 / .45); backdrop-filter: blur(3px);
-  animation: fadeIn .16s var(--ease);
+  animation: fadeIn var(--dur) var(--ease);
 }
 @keyframes fadeIn { from { opacity: 0; } }
 .modal-card {
@@ -898,28 +961,54 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
 .present {
   position: fixed; inset: 0; z-index: 9600;
   background: #0b0f14;
+  /* 兜底居中：万一 transform 被脚本清掉，也不会贴到左上角。
+     注意这条**只能当兜底** —— 绝对定位的子元素不吃 place-items，
+     真正的居中靠下面那条 translate(-50%,-50%)（见坑位 123）。 */
   display: grid; place-items: center;
 }
 .present iframe {
-  position: absolute; inset: 0;
+  position: absolute;
+  /* 坑：原来写的是 inset:0 + 固定 1920×1080。
+     inset:0 和显式 width 同时存在时 right/bottom 会被忽略，元素落在 (0,0)，
+     再配 transform-origin:center —— 缩放绕的是**它自己**的中心 (960,540)，
+     而那个点只有在视口恰好也是 1920×1080 时才等于视口中心。
+     于是其余任何分辨率下画布都偏出视口：实测 1366×768 时右侧裁掉 276px、
+     底部裁掉 156px，接近五分之一的画面在屏幕外。
+     现在改成 left/top:50% + translate(-50%,-50%)，缩放中心才真正落在视口中心。 */
+  left: 50%; top: 50%;
   width: 1920px; height: 1080px;
-  border: 0; transform-origin: center center;
+  border: 0;
+  transform: translate(-50%, -50%) scale(1);
+  transform-origin: center center;
   background: #fff;
 }
 .present-hud {
   position: absolute; right: 16px; bottom: 14px; z-index: 3;
-  display: flex; align-items: center; gap: 9px;
-  padding: 6px 10px; border-radius: 999px;
-  background: rgb(20 30 45 / .74); color: #e7eaf0;
-  font-size: 11.5px; backdrop-filter: blur(8px);
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 999px;
+  background: rgb(20 30 45 / .82); color: #e7eaf0;
+  font-size: 11.5px; backdrop-filter: blur(10px);
   border: 1px solid rgb(255 255 255 / .12);
-  opacity: .18; transition: opacity .18s;
+  /* 演示时不该有条控制栏杵在画面右下角；但控件又在，
+     于是「完全不显示」也不对 —— 半透明 .18 的老做法两头不讨好：
+     摆在那儿当干扰，同时又因为太淡而没人发现它能点。
+     现在改成无操作 2.5s 后整条淡出、鼠标一动立刻回来。 */
+  opacity: 0; transform: translateY(4px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
-.present-hud:hover { opacity: 1; }
-.hud-sep { width: 1px; height: 14px; background: rgb(255 255 255 / .2); }
+.present-hud.show { opacity: 1; transform: none; pointer-events: auto; }
+/* 指针进入不可见区域也要唤出它，否则「按钮在那儿但点不到」 */
+.present-hud:hover { opacity: 1; transform: none; pointer-events: auto; }
+.hud-sep { width: 1px; height: 14px; margin: 0 2px; background: rgb(255 255 255 / .2); }
+#present-pos { min-width: 46px; text-align: center; color: rgb(255 255 255 / .82); }
 .hud-btn { color: #e7eaf0; }
-.hud-btn:hover { background: rgb(255 255 255 / .14); color: #fff; }
+.hud-btn:hover { background: rgb(255 255 255 / .16); color: #fff; }
+/* 上一页 / 下一页是演示里最高频的两个操作，字号给大一档好定位 */
+#present-prev, #present-next { min-width: 28px; font-size: 15px; }
+#present-fs.on { background: rgb(255 255 255 / .2); color: #fff; }
+.hud-btn:disabled { opacity: .3; cursor: not-allowed; }
 .present-notes {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
   max-height: 26vh; overflow-y: auto;
@@ -961,14 +1050,107 @@ body.dragging-file::after {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 
+/* ── 第二行：上下文操作栏 ─────────────────────────────────────────────
+   高度只比顶栏矮一点（34px vs 46px），是「顶栏的延续」而不是新的一层：
+   两行之间不画分隔线，靠背景色差（顶栏 --surface / 第二行 --chrome）区分，
+   否则会在画布上方多出一条横线，视觉上把顶栏压矮。 */
+.ctx-bar {
+  flex-shrink: 0;
+  min-height: 36px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+  z-index: 55;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.ctx-bar::-webkit-scrollbar { height: 0; width: 0; }
+.ctx-bar[hidden] { display: none !important; }
+
+/* 换选区时整条第二行会换内容，做一个极短的淡入，
+   让「它变了」这件事被看见，而不是让人怀疑自己点错了地方。 */
+.ctx-group {
+  display: flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+  animation: ctx-in var(--dur) var(--ease);
+}
+.ctx-group[hidden] { display: none !important; }
+@keyframes ctx-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 左侧的上下文标签：告诉用户「现在这一排是给谁用的」 */
+.ctx-tag {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  height: 21px; padding: 0 9px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 11.5px; font-weight: 600; color: var(--ink-2);
+  white-space: nowrap;
+}
+.ctx-tag-sub {
+  font-style: normal; font-size: 10.5px; font-weight: 400;
+  color: var(--faint); letter-spacing: .3px;
+}
+.ctx-tag-sub:not(:empty)::before { content: '· '; }
+
+.ctx-lbl {
+  font-size: 11px; color: var(--faint);
+  letter-spacing: .4px; white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 几何数字输入：标签在输入框左侧（顶栏是横条，竖排标签会太高） */
+.ctx-num {
+  display: flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+}
+.ctx-num label {
+  font-size: 10.5px; color: var(--faint); letter-spacing: .4px;
+}
+.ctx-num .input { width: 56px; }
+
+.ctx-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+/* 控件高度统一压到 24px（第二行 min-height 34px、上下 padding 4px，内容盒 26px 正好放得下，
+   不用改条高、不影响 1600px 宽度预算）。与顶栏按钮同高，两行才像一整套；
+   24px 也是「不用瞄准就能点到」的下限。 */
+.ctx-bar .mini-btn { height: 24px; }
+.ctx-bar .seg { padding: 2px; }
+.ctx-bar .seg-btn { min-width: 24px; height: 24px; }
+.ctx-bar .input.sm { height: 24px; }
+
+/* 宽度预算：这一行要塞「对齐 8 键 + 5 个数字 + 填充 + 4 个图层键 + 复制删除
+   + 表格 4 键（选中表格时）+ 文字格式 11 个」。
+   1600px 视口下选中最宽的一态不能溢出 —— 末尾的文字色按钮是个高频动作，
+   为了藏它而去横向滚动，等于没有。
+   对齐键从 22 放宽到 24（命中区下限）后要收回 16px，
+   做法是压输入框：几何数字 44px（1920 四位放得下）、颜色文本 62px。
+   宽度确实不够时 .ctx-bar 仍可横向滚动（和顶栏同一套做法）。 */
+.ctx-bar .ctx-num .input { width: 44px; }
+.ctx-bar .color-field .input.mono { width: 62px; }
+.ctx-bar .color-field input[type="color"] { width: 24px; height: 24px; }
+/* 这里原来还有一条 `.ctx-bar .seg-btn { min-width: 22px }`，是当初压宽度预算时留下的。
+   它排在上面那条之后、同为 (0,2,0)，于是把 24px 又压回 22px ——
+   按钮实际只有 22px 宽，审计一眼就量出来了。删掉。 */
+
 /* ── 顶栏文字格式工具条 ─────────────────────────────────────────────── */
+/* 注意选择器：这些按钮的 class 是 "tb-btn is-sym fmt"，**没有** btn 类。
+   早先这里写的是 .btn.fmt，整条规则一条都没命中（激活色反而由 .tb-btn.on 兜住了），
+   所以字号一直没被这组规则管过。搬进第二行时顺手改成能命中的写法。 */
 .fmt-group { gap: 2px; }
 .fmt-group[hidden] { display: none !important; }
-.btn.fmt { min-width: 28px; padding: 0 6px; font-size: 12.5px; }
-.btn.fmt.on {
-  background: var(--blue); border-color: var(--blue); color: #fff;
+/* 文字格式组 / 缩放组 / 放映按钮：高度都收在 24px，
+   与第二行其它控件、第二行上下边界（min-height 36px - padding 8px = 28px）都对得上。
+   之前这三处各写各的 21 / 22px，审计一眼就看出「同一条栏里按钮高低不齐」。 */
+.tb-btn.is-sym.fmt {
+  width: 28px; min-width: 28px; height: 24px;
+  padding: 0 5px; font-size: 12.5px;
 }
-.btn.fmt b, .btn.fmt i, .btn.fmt u { font-size: 13px; }
+.tb-btn.is-sym.fmt b, .tb-btn.is-sym.fmt i, .tb-btn.is-sym.fmt u { font-size: 13px; }
 .fmt-size {
   min-width: 40px; text-align: center;
   font-size: 11.5px; color: var(--muted);
@@ -992,7 +1174,7 @@ body.dragging-file::after {
   background: var(--surface); color: var(--ink-2);
   font-size: 13px; line-height: 1; cursor: pointer;
   box-shadow: var(--shadow-1);
-  transition: background .15s, color .15s, width .15s;
+  transition: background var(--dur), color var(--dur), width var(--dur);
 }
 .edge-tab[hidden] { display: none !important; }
 .edge-tab:hover { background: var(--chrome-2); color: var(--ink); width: 26px; }
@@ -1011,7 +1193,7 @@ body.dragging-file::after {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow-2);
   transform-origin: top right;
-  animation: menu-in .16s var(--ease);
+  animation: menu-in var(--dur) var(--ease);
 }
 .tb-menu[hidden] { display: none !important; }
 @keyframes menu-in {
@@ -1023,7 +1205,7 @@ body.dragging-file::after {
   padding: 8px 10px; border: 0; border-radius: var(--radius-sm);
   background: transparent; color: var(--ink);
   font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
-  transition: background-color .12s var(--ease);
+  transition: background-color var(--dur) var(--ease);
 }
 .menu-item:hover { background: var(--chrome-2); }
 .menu-item .mi-ico { width: 16px; text-align: center; color: var(--muted); font-size: 13px; }
@@ -1119,7 +1301,7 @@ body.dragging-file::after {
   padding: 6px 8px;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow-2);
-  animation: menu-in .16s var(--ease);
+  animation: menu-in var(--dur) var(--ease);
 }
 .find-bar[hidden] { display: none !important; }
 .find-bar input {
@@ -1143,11 +1325,11 @@ body.dragging-file::after {
   display: flex; align-items: center; gap: 2px;
   padding: 2px 4px; border-radius: 999px;
   background: var(--chrome-2);
-  transition: box-shadow .16s var(--ease);
+  transition: box-shadow var(--dur) var(--ease);
 }
 .zoom-group .btn {
   border: 0; background: transparent; color: var(--ink-2);
-  width: 22px; height: 22px; padding: 0; font-size: 13px;
+  width: 24px; height: 24px; padding: 0; font-size: 13px;
   display: grid; place-items: center; cursor: pointer;
   transition: background-color .14s var(--ease), color .14s var(--ease);
 }
@@ -1159,12 +1341,28 @@ body.dragging-file::after {
 }
 .zoom-group .zoom-label:hover { color: var(--blue); }
 
-/* ── 全局手感：按钮/输入框的过渡统一走同一条曲线 ────────────────────── */
-.btn, .mini-btn, .input, .seg-btn, .layer-row {
-  transition: background-color .14s var(--ease), border-color .14s var(--ease),
-              color .14s var(--ease), box-shadow .14s var(--ease), transform .12s var(--ease);
+/* ── 全局手感：所有按钮 / 输入框的过渡统一走同一条曲线、同一时长 ──────────
+   选择器必须列全。原先只写了 .btn/.mini-btn/.input/.seg-btn/.layer-row，
+   于是 .tb-btn / .layer-btn / .swatch / .zoom-group 里的按钮各自保留了自己的
+   时长（0.13 / 0.18 / 0.16 / 0.1 …），点下去快慢不一。
+   现在统一到 var(--dur)，审计里「过渡时长」一列应当只剩一种。 */
+.btn, .mini-btn, .input, .seg-btn, .layer-row,
+.tb-btn, .layer-btn, .swatch, .panel-collapse, .edge-tab, .hud-btn,
+.ov-toolbar button {
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+              opacity var(--dur) var(--ease), transform var(--dur-press) var(--ease);
 }
-.btn:active, .mini-btn:active { transform: scale(.96); }
+/* 按下反馈统一为「轻微缩小」：比 translateY(1px) 更稳 ——
+   位移会改变按钮的视觉重心，相邻按钮之间看起来像在抖。 */
+.btn:active, .mini-btn:active, .seg-btn:active, .layer-btn:active, .swatch:active {
+  transform: scale(.96);
+}
+.tb-btn:active:not(:disabled) { transform: scale(.97); }
+.tb-btn:focus-visible, .mini-btn:focus-visible, .seg-btn:focus-visible,
+.layer-btn:focus-visible, .btn:focus-visible {
+  outline: 2px solid var(--blue); outline-offset: 1px;
+}
 
 /* ══ 品牌 logo（内嵌 data URI，保持单文件离线） ══ */
 .brand { display: flex; align-items: center; gap: 9px; padding-right: 8px; user-select: none; }

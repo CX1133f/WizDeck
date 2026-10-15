@@ -494,6 +494,10 @@
     this.url = null;
     this.ready = false;
     this.onReady = opts.onReady || function () {};
+    /* 面板折叠 / 展开时由 rAF 逐帧跟随动画，期间锁住其它测量入口，
+       否则 ResizeObserver(debounce 120ms)+transitionend 会插入 1–2 次
+       中间态 transform 写入，画布出现「二次渲染」跳变。 */
+    this._animLock = false;
   }
 
   Stage.prototype.setHtml = function (html, opts) {
@@ -544,16 +548,33 @@
   };
 
   Stage.prototype.measure = function () {
+    /* 面板折叠 rAF 循环正在逐帧改写 transform —— 此时任何外部测量入口
+       (ResizeObserver debounce / window.resize / transitionend) 插进来都会
+       写一个中间态, 造成画布先跳一次再跳到最终值的「二次渲染」抖动。直接跳过。 */
+    if (this._animLock) return this.scale;
     var avail = this.canvasEl.getBoundingClientRect();
+    return this._applyScale(avail.width, avail.height);
+  };
+
+  Stage.prototype._applyScale = function (availW, availH) {
     var fit = Math.min(
-      Math.max(80, avail.width - 56) / W,
-      Math.max(60, avail.height - 56) / H
+      Math.max(80, availW - 56) / W,
+      Math.max(60, availH - 56) / H
     );
     var s = U.clamp(this.fitMode ? fit : this.zoom, 0.04, 4);
+
+    /* 幂等：算出来和现在完全一样就什么都不写。
+       transform 每次被赋值都会让整块画布（1920×1080 的 iframe）重新栅格化一次。 */
+    var tf = 'scale(' + s + ')';
+    if (this.scale === s && this.el.style.transform === tf &&
+        this.el.style.width === W + 'px' && this.el.style.height === H + 'px') {
+      return s;
+    }
+
     this.scale = s;
     this.el.style.width = W + 'px';
     this.el.style.height = H + 'px';
-    this.el.style.transform = 'scale(' + s + ')';
+    this.el.style.transform = tf;
     this.el.style.margin = ((H * s - H) / 2) + 'px ' + ((W * s - W) / 2) + 'px';
     /* 选择框与手柄会跟着 .stage 一起缩放，缩小时会细到看不见、小到点不中。
        把缩放倒数暴露成 CSS 变量，让它们 counter-scale 回恒定屏幕尺寸。 */
