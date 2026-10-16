@@ -1,4 +1,4 @@
-﻿/* ============================================================================
+/* ============================================================================
    智演引擎 / WizDeck — 工作台 UI 与编辑交互
    ========================================================================== */
 (function (global) {
@@ -9,8 +9,9 @@
   var store = WD.store;
   var W = U.CANVAS_W, H = U.CANVAS_H;
 
-  /* 浮动工具条的尺寸在 refreshOverlay() 里用 offsetWidth/offsetHeight 实测，
-     不再写死常量 —— 图标尺寸一改，写死的数字就会和 CSS 对不上。 */
+  /* 选中元素时浮在画布上的那条工具条已删除（它压住元素内容，5 个键又全有
+     等价路径）。选择框与八向手柄仍用 offsetWidth 实测尺寸，不写死常量 —— 
+     图标尺寸一改，写死的数字就会和 CSS 对不上。 */
 
   /* ══════════════════════════════════════════════════════════════════════
      0. 小工具
@@ -240,10 +241,16 @@
     EM: 1, STRONG: 1, B: 1, I: 1, U: 1, S: 1, SMALL: 1, BIG: 1, MARK: 1, SUB: 1, SUP: 1,
     CODE: 1, KBD: 1, SAMP: 1, VAR: 1, ABBR: 1, CITE: 1, Q: 1, TIME: 1, SPAN: 1, A: 1,
     LABEL: 1, BDI: 1, BDO: 1, RUBY: 1, RT: 1, RP: 1, DEL: 1, INS: 1,
+    /* MathML 也按「行内文字片段」处理：<mi><mo><mn> 等不能被当成一个可摆放的元素，
+       它们的容器（公式 div / <math> 块）才是真正要选的对象。 */
+    MI: 1, MO: 1, MN: 1, MS: 1, MTEXT: 1, MROW: 1, ANNOTATION: 1
   };
 
   function isInlineTextTag(node, win) {
-    if (!INLINE_TEXT_TAGS[node.tagName]) return false;
+    /* MathML / SVG 节点的 tagName 是小写（'mi' / 'tspan'），HTML 节点是大写。
+       大小写都查，免得「MathML 公式点中 mi 元素」这种事发生。 */
+    var tn = node.tagName;
+    if (!INLINE_TEXT_TAGS[tn] && !INLINE_TEXT_TAGS[tn.toUpperCase()]) return false;
     if (hasOwnPaint(node, win)) return false;      // 有底色/边框 → 当成小标签块
     if (node.tagName === 'IMG' || node.tagName === 'SVG') return false;
     return true;
@@ -302,6 +309,9 @@
     /* 整页底板不参与点选 */
     if (isPageBackdrop(node, win)) return false;
 
+    /* 公式是「内容=LaTeX 源」的独立对象：透明底也能点中编辑 */
+    if (node.hasAttribute && node.getAttribute('data-wd-added') === 'formula') return true;
+
     if (!hasBlockChildren(node, win)) {
       /* 叶子：有文字、或者有绘制 */
       if ((node.textContent || '').trim()) return true;
@@ -326,6 +336,43 @@
       n = n.parentElement;
     }
     return best;
+  }
+
+  /* 父页 client 坐标 → 帧内坐标 + 命中元素。
+     舞台是 1920×1080 的 iframe 套 transform:scale，帧内 pointer 事件的
+     clientX/clientY 本来就是帧内坐标（pickAt 的既有约定），只有右键这类
+     **发生在父页**的事件才需要这次逆变换：(client - stageRect) / scale。
+     缩放比沿用 E.stage.scale —— 与 normalizePoint()、框选桥接处同一套。 */
+  function clientToFrame(clientX, clientY) {
+    if (!E.stage || !E.stage.el || !E.stage.ready) return null;
+    var s = E.stage.scale;
+    if (!(s > 0)) return null;
+    var r = E.stage.el.getBoundingClientRect();
+    var x = (clientX - r.left) / s;
+    var y = (clientY - r.top) / s;
+    return { x: x, y: y, hit: pickAt(x, y) };
+  }
+
+  /* clientToFrame 的逆变换：帧内坐标 → 父页 client 坐标。
+     菜单是父页里 position:fixed 的节点，只认父页 client 坐标。 */
+  function frameToClient(fx, fy) {
+    if (!E.stage || !E.stage.el || !E.stage.ready) return null;
+    var r = E.stage.el.getBoundingClientRect();
+    return { x: r.left + fx * E.stage.scale, y: r.top + fy * E.stage.scale };
+  }
+
+  /* 画布右键的统一收尾：先让选区跟上光标下的元素，再开菜单。
+     关键在「跟上」——原来右键不改选区，于是右键另一张卡片后，菜单里的
+     「编辑文字 / 删除 / 换图层」全都作用在**上一次选中**的元素上，
+     用户看到的是"点了没反应 / 改错了对象"。
+     规则：右键空白 → 清空选区（回到页面操作）；右键已选中的元素 → 保持选区
+     （多选时对齐/分布仍然可用）；右键别的元素 → 只选它一个。 */
+  function openCanvasContextMenu(hit, loc) {
+    var keepMulti = !!(hit && isSelected(hit) && E.selection.length > 1);
+    if (!hit) clearSelection();
+    else if (!isSelected(hit)) setSelection([hit]);
+    else refreshOverlay();
+    openContextMenu({ x: loc.x, y: loc.y, forceMulti: keepMulti });
   }
 
   /* 从命中点向上找出最适合选中的元素 */
@@ -419,7 +466,7 @@
            iframe#stage-frame
            .guides          ← 在 .stage 内
            .overlay         ← 在 .stage 内
-             #frame-box / #marquee / #ov-toolbar
+             #frame-box / #marquee
 
      也就是说 **.overlay 与 .guides 都在被缩放的 .stage 里面**，
      它们自身的 left/top/width/height 用的是「画布坐标」（1920×1080 的空间），
@@ -434,7 +481,6 @@
   function refreshOverlay() {
     var box = $('frame-box');
     var label = $('ov-label');
-    var bar = $('ov-toolbar');
 
     /* 选区可能指向上一份文档里的节点（撤销 / 重做 / 切页都会重建舞台文档）。
        这种游离节点 getBoundingClientRect() 全是 0，会让选择框缩成一点、
@@ -443,7 +489,6 @@
 
     if (!E.selection.length || E.editing) {
       box.hidden = true;
-      bar.hidden = true;
       updateStatusSel();
       return;
     }
@@ -473,18 +518,87 @@
       ? ('已选 ' + E.selection.length + ' 个元素')
       : (U.describeElement(E.selection[0]) + '  ' + Math.round(vb.w) + '×' + Math.round(vb.h));
 
-    /* 浮动工具条放在选择框上方，空间不足则放到下方；同样用画布坐标并夹在画布内。
-       宽高改成**实测**而不是写死常量：它会随图标尺寸、缩放一起变，
-       而工具条本身做了 counter-scale，实测出来的正好是它在屏幕上真正占的尺寸
-       （offsetWidth 不受祖先 transform 影响，而 scale 已被自身抵消）。
-       写死的数字迟早和 CSS 对不上，夹取就会算错、工具条贴边被裁掉。 */
-    bar.hidden = false;
-    var barW = bar.offsetWidth || 168;
-    var barH = bar.offsetHeight || 40;
-    var barTop = vb.y - barH - 8;
-    if (barTop < 0) barTop = vb.y + vb.h + 8;
-    bar.style.left = Math.max(0, Math.min(W - barW, vb.x)) + 'px';
-    bar.style.top = Math.max(0, Math.min(H - barH, barTop)) + 'px';
+    /* 端点 / 拐点 / 切线 / 顶点手柄：随选中元素的种类切换。
+       · 线条族（直线/箭头/曲线/连接线）→ 两个端点；
+       · 连接线（肘形，有 bend 无 c1）→ 再多一个拐点手柄；
+       · 曲线族（有 c1/c2 三次贝塞尔切线）→ 两端各一个切线手柄 + 指引线；
+       · 多边形 → 每个顶点一个可拖手柄。
+       位置一律用 toBox：比例点(0~100) × 当前盒子像素 —— 与 beginEndpointDrag
+       的 toAbs 同一套换算，斜线 / 曲线端点才会各在其位。 */
+    var epStart = box.querySelector('.h-ep-start');
+    var epEnd = box.querySelector('.h-ep-end');
+    var epBend = box.querySelector('.h-ep-bend');
+    var epC1 = box.querySelector('.h-ep-c1');
+    var epC2 = box.querySelector('.h-ep-c2');
+    var tangentGuide = box.querySelector('.tangent-guide');
+    var spoke1 = box.querySelector('.t-spoke-1');
+    var spoke2 = box.querySelector('.t-spoke-2');
+    var vtxLayer = box.querySelector('.vtx-layer');
+    var selNode = E.selection[0];
+    var kind = selNode && selNode.getAttribute && selNode.getAttribute('data-wd-added');
+    /* 线条家族（直线/箭头/曲线/连接线）：只留端点，把包围盒那圈边框也去掉 ——
+       对一个斜着画的细线条来说，一圈矩形边框既挡视线又没意义，拖端点才是它的操作。 */
+    box.classList.toggle('box-line',
+      !!(selNode && !multi && WD.elements.isLineKind && WD.elements.isLineKind(kind)));
+
+    var toBox = function (p) { return { x: p[0] / 100 * vb.w, y: p[1] / 100 * vb.h }; };
+    var place = function (el, p) {
+      var s = toBox(p);
+      el.style.left = s.x + 'px';
+      el.style.top = s.y + 'px';
+      return s;
+    };
+    var hideAll = function () {
+      [epStart, epEnd, epBend, epC1, epC2].forEach(function (el) { if (el) el.classList.remove('shown'); });
+      if (tangentGuide) tangentGuide.style.display = 'none';
+      if (vtxLayer) vtxLayer.innerHTML = '';
+    };
+
+    var lp = (selNode && !multi && WD.elements.linePointsOf) ? WD.elements.linePointsOf(selNode) : null;
+    if (lp && !multi) {
+      place(epStart, lp.p1); epStart.classList.add('shown');
+      place(epEnd, lp.p2); epEnd.classList.add('shown');
+      /* 肘形连接线才有 bend 且没有切线手柄；曲线族改走 c1/c2，隐藏旧拐点。 */
+      if (lp.bend && !lp.c1) {
+        place(epBend, lp.bend); epBend.classList.add('shown');
+      } else {
+        epBend.classList.remove('shown');
+      }
+      /* 曲线族：两条切线手柄 + 从锚点连到手柄的指引线。 */
+      if (lp.c1 && lp.c2 && tangentGuide) {
+        var s1 = place(epC1, lp.c1); epC1.classList.add('shown');
+        var s2 = place(epC2, lp.c2); epC2.classList.add('shown');
+        var a1 = toBox(lp.p1), a2 = toBox(lp.p2);
+        tangentGuide.style.display = 'block';
+        tangentGuide.setAttribute('width', vb.w);
+        tangentGuide.setAttribute('height', vb.h);
+        tangentGuide.setAttribute('viewBox', '0 0 ' + vb.w + ' ' + vb.h);
+        spoke1.setAttribute('x1', a1.x); spoke1.setAttribute('y1', a1.y);
+        spoke1.setAttribute('x2', s1.x); spoke1.setAttribute('y2', s1.y);
+        spoke2.setAttribute('x1', a2.x); spoke2.setAttribute('y1', a2.y);
+        spoke2.setAttribute('x2', s2.x); spoke2.setAttribute('y2', s2.y);
+        epBend.classList.remove('shown');
+      } else {
+        epC1.classList.remove('shown');
+        epC2.classList.remove('shown');
+        tangentGuide.style.display = 'none';
+      }
+      if (vtxLayer) vtxLayer.innerHTML = '';
+    } else if (selNode && !multi && kind === 'poly' && WD.elements.verticesOf) {
+      /* 多边形：逐顶点手柄。先清掉线条族那排手柄，再按顶点数填 .vtx-layer。 */
+      hideAll();
+      var verts = WD.elements.verticesOf(selNode);
+      for (var vi = 0; vi < verts.length; vi++) {
+        var vh = document.createElement('div');
+        vh.className = 'handle h-vtx shown';
+        vh.setAttribute('data-h', 'vtx-' + vi);
+        vh.title = '顶点 ' + (vi + 1);
+        place(vh, verts[vi]);
+        vtxLayer.appendChild(vh);
+      }
+    } else {
+      hideAll();
+    }
 
     /* 箭头 / 双箭头是「按当前尺寸现算 path」的：拖完手柄、改完填充色、
        撤销重做，都要重画一次。refreshOverlay 恰好是这些时机都会经过的地方。 */
@@ -1125,9 +1239,27 @@
     st.margin = '0';
     st.boxSizing = 'border-box';
     Object.keys(spec.style).forEach(function (k) { st[k] = spec.style[k]; });
+    /* 规格表里的自定义数据属性（线条类的两个端点 / 自由绘制与多边形的点集）。
+       写在 style 之后：syncLine 要读它们才能算出路径。 */
+    if (spec.attrs) {
+      Object.keys(spec.attrs).forEach(function (k) { node.setAttribute(k, spec.attrs[k]); });
+    }
+    /* 线条类把三个比例点**显式写出来**：读取时有默认值兜底，但写出来之后
+       存档是自描述的（别人打开工程文件能直接看到几何），
+       拖端点时也不必先判断「属性不存在」这一种情况。 */
+    if (WD.elements.linePointsOf) {
+      var lpDef = WD.elements.linePointsOf(node);
+      if (lpDef && !node.getAttribute('data-wd-p1')) {
+        node.setAttribute('data-wd-p1', JSON.stringify(lpDef.p1));
+        node.setAttribute('data-wd-p2', JSON.stringify(lpDef.p2));
+        if (lpDef.bend) node.setAttribute('data-wd-bend', JSON.stringify(lpDef.bend));
+        if (lpDef.c1) node.setAttribute('data-wd-c1', JSON.stringify(lpDef.c1));
+        if (lpDef.c2) node.setAttribute('data-wd-c2', JSON.stringify(lpDef.c2));
+      }
+    }
     node.textContent = spec.text || '';
     if (spec.html) node.innerHTML = spec.html;
-    /* 箭头 / 双箭头是自己画 SVG 的，边框盒子本身透明 */
+    /* 线条类是自己画 SVG 的，边框盒子本身透明 */
     if (WD.elements.syncLine(node)) {
       st.overflow = 'visible';
     }
@@ -1138,6 +1270,63 @@
     commit('添加' + spec.label);
     renderLayers();
     return node;
+  }
+
+  /* ── 画布绘制（自由绘制 / 多边形）的落地与桥 ──────────────────────────
+     绘制流程在 08-draw.js：它只管采集点、画预览、判定闭合；
+     落到文档里、进撤销栈、被选中，都是 UI 层的事，通过这个桥交出去。 */
+  function createDrawnElement(opt) {
+    opt = opt || {};
+    var kind = opt.kind === 'poly' ? 'poly' : 'drawn';
+    var root = rootEl();
+    var doc = frameDoc();
+    if (!root || !doc) return null;
+    var w = Math.max(6, Math.round(opt.w || 100));
+    var h = Math.max(6, Math.round(opt.h || 100));
+    var node = doc.createElement('div');
+    node.setAttribute('data-wd-added', kind);
+    node.setAttribute('data-wd-points', JSON.stringify(opt.points || []));
+    var st = node.style;
+    st.position = 'absolute';
+    st.left = Math.round(opt.x || 0) + 'px';
+    st.top = Math.round(opt.y || 0) + 'px';
+    st.width = w + 'px';
+    st.height = h + 'px';
+    st.margin = '0';
+    st.boxSizing = 'border-box';
+    /* 描边图形：底色透明，颜色/粗细放 data-wd-stroke / data-wd-w
+       （与规格表里其它描边形状一致；盒子本身恒透明）。 */
+    st.background = 'transparent';
+    node.setAttribute('data-wd-stroke', '#3b6fd4');
+    node.setAttribute('data-wd-w', '3');
+    node.style.zIndex = String(nextZ());
+    root.appendChild(node);
+    WD.elements.syncLine(node);
+    st.overflow = 'visible';
+    setSelection([node]);
+    commit(kind === 'poly' ? '绘制多边形' : '自由绘制');
+    renderLayers();
+    return node;
+  }
+
+  /* 把绘制工具需要的最小接口交出去。少给一点，绘制层就少一层耦合：
+     它拿不到检查器 / 面板 / 撤销栈的内部状态，也就不会误用。 */
+  function installDrawBridge() {
+    if (!global.WD) return;
+    global.WD.drawBridge = {
+      size: function () { return { w: W, h: H }; },
+      root: rootEl,
+      doc: frameDoc,
+      overlay: function () { return $('overlay'); },
+      stage: function () { return E.stage; },
+      isEditing: function () { return !!E.editing; },
+      setCursor: function (c) {
+        var d = frameDoc();
+        if (d && d.body) d.body.style.cursor = c || '';
+      },
+      hint: function (text, tone, ms) { toast(text, tone || 'info', ms || 2200); },
+      create: createDrawnElement,
+    };
   }
 
   /* 元素规格表。
@@ -1200,19 +1389,61 @@
       tag: 'div', label: '平行四边形', w: 400, h: 250,
       style: { background: '#dce7f5', clipPath: 'polygon(24% 0%, 100% 0%, 76% 100%, 0% 100%)' },
     },
-    /* 一维线条：高度锁死，拖角也不会变成二维色块。
-       箭头 / 双箭头由 WD.elements.syncLine() 生成固定尺寸的箭头 + 可拉伸的杆。 */
+    /* ── 线条类：两点头模型 ──────────────────────────────────────────
+       几何由 data-wd-p1 / p2（/ bend）三个 0~100 的比例点决定，
+       盒子只是这三点的包围盒 —— 所以斜线天然成立（原来是锁死高度的水平线）。
+       颜色 / 粗细的真源是 data-wd-stroke / data-wd-w，**不是** CSS 盒子：
+       盒子必须恒为透明（图形由里面的 SVG 画），CSS 上的颜色会被 syncLine 刷掉。
+       选中后只露两个端点手柄 + 一个拐点手柄（不露 8 个盒手柄）——
+       要改形状就拖点，而不是缩放盒子。
+       自由绘制 / 多边形另走 data-wd-points（顶点集），由 WD.drawTool 采集。 */
     line: {
-      tag: 'div', label: '直线', w: 620, h: 6,
-      style: { background: '#3b6fd4' },
+      tag: 'div', label: '直线', w: 620, h: 8,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
     },
     arrow: {
       tag: 'div', label: '箭头', w: 620, h: 26,
       style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
     },
     dblarrow: {
       tag: 'div', label: '双向箭头', w: 620, h: 26,
       style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    curve: {
+      tag: 'div', label: '曲线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    connector: {
+      tag: 'div', label: '连接线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    connectorcurve: {
+      tag: 'div', label: '曲线连接线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    /* 这两个的默认点集 = 一条斜线 / 一个六边形，够用户先看到「插进来的是什么」，
+       真正的形状由画布上拖 / 点采集后覆盖。 */
+    drawn: {
+      tag: 'div', label: '自由绘制', w: 520, h: 300,
+      style: { background: 'transparent' },
+      attrs: {
+        'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3',
+        'data-wd-points': '[[4,88],[26,44],[48,62],[70,22],[96,36]]',
+      },
+    },
+    poly: {
+      tag: 'div', label: '多边形', w: 420, h: 360,
+      style: { background: 'transparent' },
+      attrs: {
+        'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3',
+        'data-wd-points': '[[50,2],[92,27],[92,73],[50,98],[8,73],[8,27]]',
+      },
     },
     /* 表格 / 公式 / 图表走各自的工厂，不在规格表里 */
   };
@@ -1291,11 +1522,16 @@
     return node;
   }
 
-  /* LaTeX 公式：弹窗输入，带实时预览，OK 之后插进画布 */
-  function openLatexDialog() {
-    var preset = 'E = m c^2';
+  /* LaTeX 公式：弹窗输入，带实时预览。
+     既用于「插入 LaTeX」走 create 路径，也用于「编辑已有公式」走 update 路径。
+     传入 existing 时弹窗标题换成「编辑公式」、默认填它的 LaTeX、OK 后就地更新
+     （不是再插一个 —— 改公式不应该让画布多一张）。 */
+  function openLatexDialog(preset, existing) {
+    preset = preset || 'E = m c^2';
+    var title = existing ? '编辑 LaTeX 公式' : '插入 LaTeX 公式';
+    var okLabel = existing ? '更新' : '插入';
     showModal({
-      title: '插入 LaTeX 公式',
+      title: title,
       html: '<div class="form-row"><span class="form-lbl">LaTeX</span>' +
             '<input class="input" id="tex-src" value="' + preset.replace(/"/g, '&quot;') +
             '" placeholder="例如 \\frac{a}{b} + \\sqrt{x}"></div>' +
@@ -1308,10 +1544,11 @@
           if (i) { i.value = '\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}'; refreshTexPreview(); }
         } },
         { label: '取消' },
-        { label: '插入', primary: true, keepOpen: false, onClick: function () {
+        { label: okLabel, primary: true, keepOpen: false, onClick: function () {
           var v = ($('tex-src') || {}).value || '';
           if (!v.trim()) { toast('公式内容不能为空', 'warn'); return; }
-          insertFormula(v);
+          if (existing) { updateFormula(existing, v); }
+          else { insertFormula(v); }
         } },
       ],
     });
@@ -1322,6 +1559,12 @@
       src.focus();
       src.select();
     }
+  }
+
+  function updateFormula(node, src) {
+    node.setAttribute('data-wd-latex', src);
+    node.innerHTML = WD.elements.latexToMathML(src);
+    commit('修改公式');
   }
 
   function refreshTexPreview() {
@@ -1362,90 +1605,561 @@
     return img;
   }
 
-  /* 重画一张图表：数据改了以后走这里，尺寸不变、位置不变 */
-  function repaintChart(img, data) {
+  /* 重画一张图表：数据改了以后走这里，尺寸不变、位置不变。
+     切类型（柱状 ↔ 折线 ↔ 饼状）时 kind 与原来不同，要连 data-wd-chart-kind
+     一起改写 —— 只重画不记类型的话，下次再进这段又会读回旧类型。 */
+  function repaintChart(img, data, kind) {
     if (!img) return;
-    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+    var prev = img.getAttribute('data-wd-chart-kind') || 'bar';
+    var k = kind || prev;
+    if (k !== prev) {
+      img.setAttribute('data-wd-chart-kind', k);
+      img.setAttribute('data-wd-added', 'chart-' + k);
+    }
     var cv = document.createElement('canvas');
     cv.width = 960; cv.height = 560;
-    var norm = WD.elements.normalizeChartData(data, kind);
-    WD.elements.drawChart(kind, cv, norm);
+    var norm = WD.elements.normalizeChartData(data, k);
+    WD.elements.drawChart(k, cv, norm);
     img.setAttribute('data-wd-chart', JSON.stringify(norm));
     img.src = cv.toDataURL('image/png');
   }
 
-  /* 双击图表 → 数据表编辑器。
-     分类与数值都用逗号分隔的自由输入框：一行一个系列，改起来比表格控件快得多，
-     真要正经填表再插一张新图不迟。 */
-  function openChartDialog(img) {
-    if (!img) return;
-    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+  /* ══════════════════════════════════════════════════════════════════════
+     图表数据：右栏常驻段，改一下就重画
+     ──────────────────────────────────────────────────────────────────────
+     原来是「双击图表 → 居中模态框 → 填一堆框 → 点应用」。毛病有三：
+       ① 模态框把画布盖住，改的时候看不到图；
+       ② 不点「应用」就没有反馈，容易以为没生效；
+       ③ 填错只能整个重来。
+     现在这段随选区出现/消失（选中的是图表才显示），输入停手 0.4 秒
+     自动重画并入撤销栈。分类与数值仍是逗号分隔的自由输入 ——
+     一行一个系列，比表格控件快得多，真要正经填表再插一张新图不迟。
+
+     两条实现要点：
+     · 签名相同就不重建 DOM。打字过程中每次防抖都会带着新数据回来，
+       若无脑重建，输入框会被换掉，焦点和光标全丢。
+     · 真要重建时，把焦点和光标位置还回去 —— 换掉 DOM 是为了显示新值，
+       不是为了打断正在输入的人。 */
+  var chartPanelSig = '';
+  /* 「自定义背景色」的回显：色板里没有这个颜色时要把它画在那一格上。
+     存在模块级而不是 button 的 dataset 上 —— dataset 会把值写进 DOM，
+     而这个值并不属于文档内容。 */
+  var chartCustomBg = '';
+
+  function chartDataOf(img) {
+    if (!img || !img.getAttribute) return null;
+    if (!img.hasAttribute('data-wd-chart')) return null;
     var raw = null;
     try { raw = JSON.parse(img.getAttribute('data-wd-chart') || 'null'); } catch (e) { raw = null; }
-    var d = WD.elements.normalizeChartData(raw, kind);
-    var titleName = '图表标题';
-    var labelName = '分类';
+    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+    return { img: img, kind: kind, d: WD.elements.normalizeChartData(raw, kind) };
+  }
 
-    function seriesField(s, i) {
-      return '<div class="chart-row">' +
-        '<input class="input" id="cs-n' + i + '" value="' + U.escapeHtml(s.name) + '" placeholder="系列名称">' +
-        '<input class="input" id="cs-v' + i + '" value="' + U.escapeHtml(s.data.join(', ')) +
-        '" placeholder="' + (kind === 'pie' ? '各分类的数值' : '与分类一一对应的数值') + '">' +
-        '</div>';
+  function renderChartPanel(node) {
+    var sec = $('sec-chart');
+    if (!sec) return;
+    var info = chartDataOf(node);
+    sec.hidden = !info;
+    if (!info) { chartPanelSig = ''; return; }
+
+    var d = info.d, kind = info.kind;
+    /* 签名：结构与「哪些系列是哪个颜色」都算进去。
+       只比 JSON.stringify(d) 会漏掉一种情况：点色板换了一个**别的系列已经在用**的
+       颜色时，整排颜色其实被重排了，但数据看起来「没变」，签名相同于是不重建 ——
+       色板上的选中态就停在旧颜色上。把 series 的颜色单独串进来就不会漏。 */
+    var sig = kind + '|' + JSON.stringify(d) + '|' +
+      d.series.map(function (s) { return s.color; }).join(',');
+    if (sig === chartPanelSig) return;
+
+    var act = document.activeElement;
+    var keepId = (act && act.id && sec.contains(act)) ? act.id : '';
+    var caret = keepId ? [act.selectionStart, act.selectionEnd] : null;
+
+    $('chf-title').value = d.title;
+    $('chf-legend').checked = !!d.showLegend;
+    $('chf-values').checked = !!d.showValues;
+
+    renderChartSeries(d);
+    renderChartGrid(d);
+    renderChartBg(d);
+
+    chartPanelSig = sig;
+    if (keepId) {
+      var f = $(keepId);
+      if (f) {
+        /* 重建之后输入框位置也可能变了，先滚到视野里再聚焦 */
+        if (f.scrollIntoView) { try { f.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 老浏览器 */ } }
+        f.focus();
+        if (caret && caret[0] != null) { try { f.setSelectionRange(caret[0], caret[1]); } catch (e) { /* number 类输入框不支持 */ } }
+      }
     }
+  }
 
-    var html = '<div class="form-row"><span class="form-lbl">图表标题</span>' +
-      '<input class="input" id="ch-title" value="' + U.escapeHtml(d.title) + '" placeholder="留空则不画标题"></div>' +
-      '<div class="form-row"><span class="form-lbl">' + labelName + '</span>' +
-      '<input class="input" id="ch-labels" value="' + U.escapeHtml(d.labels.join(', ')) + '" placeholder="用逗号分隔，如 一月, 二月, 三月"></div>' +
-      '<div class="form-row"><span class="form-lbl">系列与数值</span></div>' +
-      d.series.map(seriesField).join('') +
-      '<div class="form-row chart-opts">' +
-      '<label class="chk"><input type="checkbox" id="ch-legend"' + (d.showLegend ? ' checked' : '') + '> 显示图例</label>' +
-      '<label class="chk"><input type="checkbox" id="ch-values"' + (d.showValues ? ' checked' : '') + '> 显示数值</label>' +
-      '</div>' +
-      '<p class="form-tip">' + titleName + '、图例、坐标轴文字与数值都会画进图里；' +
-      '双击图表随时可以再进来改。</p>';
+  /* ── 系列行：名称 + 图表类型 + 颜色 + 删除 ──
+     每行自带一个**图表类型**：同一张图里柱状与折线可以混（一个系列一种画法），
+     这比在顶上放一个「整张图是什么类型」的分段控件更贴近实际用法 ——
+     想「总量用柱、趋势用线」时，原来那个全局开关根本做不到。
+     饼图只有一个系列（颜色即扇区轮转的起点），所以那一行不给类型也不给删除。 */
+  var SERIES_TYPES = [
+    { k: 'bar', txt: '柱状' },
+    { k: 'chartline', txt: '折线' },
+  ];
 
-    showModal({
-      title: '编辑图表数据',
-      html: html,
-      buttons: [
-        { label: '取消' },
-        { label: '恢复示例数据', onClick: function () {
-          repaintChart(img, WD.elements.defaultChartData(kind));
-          commit('恢复示例图表');
-          toast('已恢复为示例数据', 'ok');
-        } },
-        /* keepOpen:true —— 校验没过时对话框要留在原地，不能顺手把用户填的内容一起关掉 */
-        { label: '应用', primary: true, keepOpen: true, onClick: function () {
-          var labels = ($('ch-labels') || {}).value || '';
-          var parts = labels.split(/[,，]/).map(function (s) { return s.trim(); })
-            .filter(function (s) { return s !== ''; });
-          if (!parts.length) { toast('至少要有一个分类', 'warn'); return; }
-          var series = [];
-          for (var i = 0; i < d.series.length; i++) {
-            var nm = ($('cs-n' + i) || {}).value;
-            var vv = ($('cs-v' + i) || {}).value || '';
-            series.push({
-              name: (nm == null ? '' : nm).trim() || d.series[i].name,
-              color: d.series[i].color,
-              data: vv.split(/[,，\s]+/).filter(function (s) { return s !== ''; }),
-            });
-          }
-          repaintChart(img, {
-            title: (($('ch-title') || {}).value || '').trim(),
-            labels: parts,
-            series: series,
-            showLegend: !!($('ch-legend') || {}).checked,
-            showValues: !!($('ch-values') || {}).checked,
-          });
-          commit('修改图表数据');
-          toast('图表已更新', 'ok');
-          hideModal();
-        } },
-      ],
+  function seriesKindOf(info, i) {
+    if (info.kind === 'pie') return 'bar';   /* 饼图下这个值不参与绘制 */
+    var k = info.d.seriesKind && info.d.seriesKind[i];
+    return k === 'chartline' ? 'chartline' : 'bar';
+  }
+
+  function renderChartSeries(d) {
+    var host = $('chf-series');
+    if (!host) return;
+    var isPie = d.kind === 'pie';
+    var info = { kind: d.kind, d: d };
+    var pal = WD.elements.chartPalette();
+    var rows = d.series.map(function (s, i) {
+      var row = el('div', { class: 'chart-row series-row' });
+      /* data-si 是「这一行对应哪个系列」：删过系列之后编号会跳，
+         不能再用行号当系列下标（读取时也靠它对齐）。 */
+      row.setAttribute('data-si', String(i));
+      var name = el('input', {
+        class: 'input', id: 'chf-n' + i, value: s.name || '',
+        placeholder: '系列名称', title: '系列名称'
+      });
+      name.setAttribute('data-si', String(i));
+      name.setAttribute('data-f', 'name');
+      row.appendChild(name);
+
+      if (!isPie) {
+        var sel = el('select', {
+          class: 'input series-type', id: 'chf-t' + i, title: '这个系列的画法'
+        });
+        sel.setAttribute('data-si', String(i));
+        sel.setAttribute('data-f', 'kind');
+        SERIES_TYPES.forEach(function (t) {
+          var o = document.createElement('option');
+          o.value = t.k; o.textContent = t.txt;
+          if (seriesKindOf(info, i) === t.k) o.selected = true;
+          sel.appendChild(o);
+        });
+        row.appendChild(sel);
+      }
+
+      var sw = el('button', {
+        class: 'sw sw-series', type: 'button', id: 'chf-c' + i,
+        title: '描边 / 线条色：点一下开色盘（Alt+点 沿色板轮换）'
+      });
+      sw.setAttribute('data-si', String(i));
+      sw.setAttribute('data-color', s.color || pal[i % pal.length]);
+      sw.setAttribute('data-f', 'stroke');
+      sw.style.background = s.color || pal[i % pal.length];
+      row.appendChild(sw);
+
+      /* 系列「填充色」：柱状 / 饼图 那个填实的色。
+         折线族没意义，但保持同一控件不让用户奇怪。 */
+      var fill = s.fillColor || s.color || pal[i % pal.length];
+      var swFill = el('button', {
+        class: 'sw sw-series sw-fill', type: 'button', id: 'chf-cf' + i,
+        title: '填充色（柱体 / 饼图扇区）：点一下开色盘（Alt+点 沿色板轮换）'
+      });
+      swFill.setAttribute('data-si', String(i));
+      swFill.setAttribute('data-color', fill);
+      swFill.setAttribute('data-f', 'fill');
+      swFill.style.background = fill;
+      row.appendChild(swFill);
+
+      /* 真正的取色器隐藏在背后：Shift+点色格 → 弹原生色盘 */
+      var pick = el('input', {
+        type: 'color', class: 'sw-pick', id: 'chf-cp' + i,
+        value: (s.color || pal[i % pal.length]).slice(1),
+        'data-si': String(i), title: '自定义颜色',
+        'data-f': 'stroke'
+      });
+      row.appendChild(pick);
+      var pickFill = el('input', {
+        type: 'color', class: 'sw-pick', id: 'chf-fp' + i,
+        value: fill.slice(1),
+        'data-si': String(i), title: '自定义填充色',
+        'data-f': 'fill'
+      });
+      row.appendChild(pickFill);
+
+      /* 饼图只剩一个系列时也不给删除 —— 删空了这个控件就没意义了 */
+      if (!isPie || d.series.length > 1) {
+        row.appendChild(el('button', {
+          class: 'icon-btn chart-del', type: 'button', id: 'chf-d' + i,
+          title: '删除这个系列', 'data-si': String(i), text: '✕'
+        }));
+      }
+      return row;
     });
+    host.innerHTML = '';
+    rows.forEach(function (r) { host.appendChild(r); });
+  }
+
+  /* ── 数据网格：行 = 分类，列 = 系列 ──
+     以前是「一个输入框里塞一串逗号分隔的数值」。改成网格之后：
+       · 每个数一个格子，改第 3 个数不用先在长串里数逗号；
+       · 表头就是系列名，与上面「系列」段一一对应；
+       · 分类名也在行首可编辑（原来是一个单独的分类输入框）。 */
+  function renderChartGrid(d) {
+    var host = $('chf-grid');
+    if (!host) return;
+    var n = d.series.length;
+    /* 列宽：分类列弹性、每个系列列等宽、末列放删除。
+       系列多的时候整块横向滚动（外面那层 overflow 见 CSS）。 */
+    host.style.gridTemplateColumns = 'minmax(64px, 1fr) repeat(' + n + ', minmax(54px, 78px)) 22px';
+    host.innerHTML = '';
+
+    host.appendChild(el('div', { class: 'chart-grid-corner' }));
+    d.series.forEach(function (s, si) {
+      host.appendChild(el('div', {
+        class: 'chart-grid-head', text: s.name || ('系列' + (si + 1)), title: s.name || ''
+      }));
+    });
+    host.appendChild(el('div'));
+
+    d.labels.forEach(function (lb, ri) {
+      var key = el('input', {
+        class: 'input grid-key', id: 'chf-cat' + ri, value: lb,
+        'data-ri': String(ri), 'data-f': 'label', title: '分类名称'
+      });
+      host.appendChild(key);
+      d.series.forEach(function (s, si) {
+        var v = el('input', {
+          class: 'input grid-val', id: 'chf-v' + ri + '_' + si, inputmode: 'decimal',
+          value: s.data[ri] == null ? '' : String(s.data[ri]),
+          'data-ri': String(ri), 'data-si': String(si), 'data-f': 'value',
+          title: (s.name || '') + ' · ' + lb
+        });
+        host.appendChild(v);
+      });
+      host.appendChild(el('button', {
+        class: 'icon-btn chart-del', type: 'button', id: 'chf-rd' + ri,
+        'data-ri': String(ri), title: '删除这一行（分类）', text: '✕'
+      }));
+    });
+  }
+
+  /* ── 背景色 ──
+     第一个色块是「无」（透明，斜线示意），后面是常用底色 + 一个自定义取色。
+     默认无 —— 课件底板常见深色/渐变，烤成白底会变成一张贴上去的白纸。 */
+  function renderChartBg(d) {
+    var host = $('chf-bg');
+    if (!host) return;
+    host.innerHTML = '';
+    var cur = d.bgColor || '';
+    var none = el('button', {
+      class: 'sw sw-none' + (cur ? '' : ' active'), type: 'button',
+      id: 'chf-bg-none', title: '无背景（透明）'
+    });
+    host.appendChild(none);
+    WD.elements.chartBackgrounds().forEach(function (c, i) {
+      var b = el('button', {
+        class: 'sw sw-bg' + (c === cur ? ' active' : ''), type: 'button',
+        id: 'chf-bg' + i, 'data-color': c, title: '背景色：' + c
+      });
+      b.style.background = c;
+      host.appendChild(b);
+    });
+    var pick = el('button', {
+      class: 'sw sw-custom' + (cur && WD.elements.chartBackgrounds().indexOf(cur) < 0 ? ' active' : ''),
+      type: 'button', id: 'chf-bg-pick', title: '自定义背景色'
+    });
+    chartCustomBg = cur;
+    if (cur && WD.elements.chartBackgrounds().indexOf(cur) < 0) pick.style.background = cur;
+    host.appendChild(pick);
+  }
+
+  /* ── 系列 / 分类的增删 ──
+     这几种是**结构改动**，不能等 0.4 秒防抖：用户点了「＋ 添加系列」却半天没反应，
+     只会以为按钮坏了。所以它们统一走 applyChartPanelNow()，并且先把面板当前值读回来
+     （否则刚改的名字会被上一次画图的数据覆盖）。 */
+  function chartAddSeries() {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (info.kind === 'pie') { toast('饼图只能有一个系列', 'warn'); return; }
+    var list = liveChartSeries(info).map(function (s) { return s; });
+    var pal = WD.elements.chartPalette();
+    list.push({ name: '系列' + (list.length + 1), color: pal[list.length % pal.length], data: [] });
+    /* 新系列先补满分类数，否则网格里这一列是空的、图上也没柱子 */
+    var nCat = $$('#chf-grid .grid-key').length || info.d.labels.length;
+    var last = list[list.length - 1];
+    while (last.data.length < nCat) last.data.push(0);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: currentPanelLabels(info), series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartRemoveSeries(si) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (info.kind === 'pie' || (info.d.series || []).length <= 1) {
+      toast('至少要保留一个系列', 'warn');
+      return;
+    }
+    var list = liveChartSeries(info);
+    if (!(si >= 0) || si >= list.length) return;
+    list.splice(si, 1);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: currentPanelLabels(info), series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartAddCategory() {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var list = liveChartSeries(info);
+    list.forEach(function (s) { s.data.push(0); });
+    var labels = currentPanelLabels(info).concat(['分类' + (currentPanelLabels(info).length + 1)]);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: labels, series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartRemoveCategory(ri) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var labels = currentPanelLabels(info);
+    if (labels.length <= 1) { toast('至少要保留一个分类', 'warn'); return; }
+    labels.splice(ri, 1);
+    var list = liveChartSeries(info);
+    list.forEach(function (s) { s.data.splice(ri, 1); });
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: labels, series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  /* 面板里当前的分类名（用户可能刚改过行首，还没重画） */
+  function currentPanelLabels(info) {
+    var keys = $$('#chf-grid .grid-key');
+    if (!keys.length) return (info.d.labels || []).slice();
+    return keys.map(function (k, i) {
+      var v = String(k.value == null ? '' : k.value).trim();
+      return v || ('分类' + (i + 1));
+    });
+  }
+
+  /* 背景色：'' = 无（透明） */
+  function chartSetBg(color) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var d = JSON.parse(JSON.stringify(info.d));
+    d.bgColor = color || '';
+    chartCustomBg = d.bgColor;
+    repaintChart(info.img, d, info.kind);
+    commit('修改图表背景色');
+    chartPanelSig = '';
+    renderChartPanel(selected());
+  }
+
+  /* 把一枚平时隐藏的 <input type=color> 临时"停"到目标元素正上方再点它。
+     原生色盘是贴着这个 input 自己的矩形弹出的：input 藏在文档末尾 / display:none
+     时，色盘会弹到左上角或屏幕外，用户点「＋」却在别处弹出 —— 就是"着色器偏移"。
+     把它定位到 anchor 的实际屏幕位置，色盘就正好从"＋"那里长出来。 */
+  function openColorPickerAt(input, anchorEl, hex, onPick) {
+    if (!input || !anchorEl) return;
+    /* 有的取色 input 平时挂着 hidden / display:none（如 #chart-bg-input），
+       那样它没有布局盒、.click() 也弹不出色盘。先让它可布局再定位。 */
+    input.hidden = false;
+    input.style.display = '';
+    var r = anchorEl.getBoundingClientRect();
+    input.style.position = 'fixed';
+    input.style.left = Math.max(0, Math.round(r.left)) + 'px';
+    input.style.top = Math.max(0, Math.round(r.top)) + 'px';
+    input.style.width = Math.max(1, Math.round(r.width)) + 'px';
+    input.style.height = Math.max(1, Math.round(r.height)) + 'px';
+    input.style.margin = '0';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
+    /* 不要设 z-index:-1：Chrome 会把它当成被遮挡的元素、退回默认锚点，
+       色盘就又弹回文档末尾（左下角）了。 */
+    var m = /^#?([0-9a-fA-F]{6})$/.exec(hex || '');
+    input.value = m ? '#' + m[1] : '#000000';
+    /* 关键：强制一次同步回流，把上面改的 fixed 坐标真正落到布局里。
+       原生色盘是**贴着 input 当前的布局矩形**弹出的；不 flush 就还是旧位置
+       （文档末尾、左下角），点「＋」色盘却从别处冒出来 —— 就是"偏差过大"。 */
+    void input.offsetWidth;
+    var done = false;
+    function restore() {
+      if (done) return; done = true;
+      input.onchange = null;
+      /* 用完立刻藏回去，免得这枚透明 input 长期挂在屏幕上占层 */
+      input.style.display = 'none';
+      input.hidden = true;
+    }
+    input.onchange = function () {
+      var v = input.value;
+      restore();
+      if (onPick) onPick(v);
+    };
+    input.click();
+    /* 极少数浏览器取消选择时不派发 change：兜底把它藏回去（色盘关闭后触发） */
+    input.addEventListener('blur', restore, { once: true });
+  }
+
+  function chartPickBg(anchor) {
+    var input = $('chart-bg-input');
+    if (!input) return;
+    var cur = currentChartBg() || '#ffffff';
+    openColorPickerAt(input, anchor || input, cur, function (hex) {
+      chartSetBg(hex || '');
+    });
+  }
+
+  /* 从右栏读回一份图表数据；分类为空则返回 null（不覆盖图上已有的）。
+     改动点：分类名与数值都从网格读，系列的画法也逐行读。 */
+  function readChartPanel(info, series) {
+    series = series || info.d.series;
+    /* 分类行数由网格决定（网格是「分类 × 系列」的真源） */
+    var keyEls = $$('#chf-grid .grid-key');
+    if (!keyEls.length) return null;
+    var labels = [];
+    keyEls.forEach(function (k) {
+      var v = String(k.value == null ? '' : k.value).trim();
+      labels.push(v || ('分类' + (labels.length + 1)));
+    });
+
+    var valEls = $$('#chf-grid .grid-val');
+    var data = series.map(function () { return []; });
+    valEls.forEach(function (v) {
+      var ri = parseInt(v.getAttribute('data-ri'), 10);
+      var si = parseInt(v.getAttribute('data-si'), 10);
+      if (!(ri >= 0) || !(si >= 0) || !data[si]) return;
+      data[si][ri] = v.value;
+    });
+
+    /* 系列行可能被删过（编号会跳），所以按行重新收集而不是按下标对齐 */
+    var rowEls = $$('#chf-series .series-row');
+    var out = rowEls.map(function (row, i) {
+      var si = parseInt(row.getAttribute('data-si'), 10);
+      if (!(si >= 0)) si = i;
+      var nameEl = row.querySelector('[data-f="name"]');
+      var kindEl = row.querySelector('[data-f="kind"]');
+      var swStroke = row.querySelector('.sw-series[data-f="stroke"]');
+      var swFill = row.querySelector('.sw-series[data-f="fill"]');
+      var old = series[si] || {};
+      var pal = WD.elements.chartPalette();
+      return {
+        name: ((nameEl || {}).value || '').trim() || old.name || ('系列' + (i + 1)),
+        color: (swStroke && swStroke.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        fillColor: (swFill && swFill.getAttribute('data-color')) || old.fillColor || (swStroke && swStroke.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        kind: kindEl ? kindEl.value : (old.kind || 'bar'),
+        data: data[si] || old.data || [],
+      };
+    });
+    if (!out.length) return null;
+
+    /* seriesKind 单独存一条平行数组：绘制层只关心「第 i 个系列怎么画」 */
+    var kinds = out.map(function (s) { return s.kind === 'chartline' ? 'chartline' : 'bar'; });
+    /* 整个图表的画法由系列决定：全是折线就是折线图，否则按柱/线混合画 */
+    var allLine = kinds.length > 0 && kinds.every(function (k) { return k === 'chartline'; });
+    var kind = info.kind === 'pie' ? 'pie' : (allLine ? 'chartline' : 'bar');
+
+    return {
+      kind: kind,
+      title: (($('chf-title') || {}).value || '').trim(),
+      labels: labels,
+      series: out.map(function (s) { return { name: s.name, color: s.color, fillColor: s.fillColor, data: s.data }; }),
+      seriesKind: kinds,
+      bgColor: currentChartBg(),
+      showLegend: !!($('chf-legend') || {}).checked,
+      showValues: !!($('chf-values') || {}).checked,
+    };
+  }
+
+  function currentChartBg() {
+    var on = $('#chf-bg .sw-bg.active');
+    if (on) return on.getAttribute('data-color') || '';
+    /* 自定义色：色板里没有它，所以那一格 active 时用挂着的值 */
+    if ($('#chf-bg .sw-custom.active')) return chartCustomBg || '';
+    return '';
+  }
+
+  /* 系列结构变了但还没走防抖重画时，读回来的数据要基于**当前面板**里的系列，
+     否则「加一个系列」会被上一版数据覆盖掉。 */
+  function liveChartSeries(info) {
+    var d = info.d;
+    var rowEls = $$('#chf-series .series-row');
+    if (!rowEls.length) return d.series;
+    var pal = WD.elements.chartPalette();
+    return rowEls.map(function (row, i) {
+      var si = parseInt(row.getAttribute('data-si'), 10);
+      var old = (si >= 0 && d.series[si]) ? d.series[si] : (d.series[i] || {});
+      var sw = row.querySelector('.sw-series');
+      return {
+        name: ((row.querySelector('[data-f="name"]') || {}).value || '').trim() || old.name || ('系列' + (i + 1)),
+        color: (sw && sw.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        data: old.data || [],
+      };
+    });
+  }
+
+  /* 立刻把当前面板写回图表（不防抖）。加/删系列与分类这种结构改动走它：
+     结构变了却等 400ms 才重画，用户会以为按钮没反应。 */
+  /* 立刻把当前面板写回图表（不防抖）。加/删系列与分类、换颜色、换类型
+     这种**结构/样式**改动走它：结构变了却等 400ms 才重画，用户会以为按钮坏了。
+     skipRender = true 时**不重建面板**：系列下拉这种**就地改值**的控件已经在
+     新值上，再重建一次反而会让「连续改两个系列类型」时第二次点不到第二个 select ——
+     第一次的 change 事件触发了重建，第二次循环时第二个 select 已经不是原来那个节点。 */
+  function applyChartPanelNow(skipRender) {
+    if (chartLiveTimer) { clearTimeout(chartLiveTimer); chartLiveTimer = null; }
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var next = readChartPanel(info, liveChartSeries(info));
+    if (!next) { toast('至少要有一个分类', 'warn'); return; }
+    repaintChart(info.img, next, next.kind);
+    /* 类型改了 → data-wd-chart-kind 也要跟着变，否则下次进这段又读回旧类型。
+       加/删系列 → 网格与系列行数量变了，**必须**重建面板（否则下拉 / 网格还停在旧版）。 */
+    var kindChanged = next.kind !== info.kind;
+    if (skipRender && !kindChanged) return;
+    commit('修改图表数据');
+    chartPanelSig = '';
+    renderChartPanel(selected());
+  }
+
+  /* 输入停手 CHART_LIVE_MS 就重画。取 400ms：短了会在「输 1、输 0」之间
+     就去画一次，白烧一次 canvas + dataURL；长了又不像「即时生效」。 */
+  var CHART_LIVE_MS = 400;
+  var chartLiveTimer = null;
+
+  function scheduleChartLive() {
+    var sec = $('sec-chart');
+    if (!sec || sec.hidden) return;
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (chartLiveTimer) clearTimeout(chartLiveTimer);
+    chartLiveTimer = setTimeout(function () {
+      chartLiveTimer = null;
+      var cur = chartDataOf(selected());
+      if (!cur) return;
+      var next = readChartPanel(cur);
+      if (!next) { toast('至少要有一个分类，图表数据没有改动', 'warn'); return; }
+      var switched = next.kind && next.kind !== cur.kind;
+      repaintChart(cur.img, next, next.kind);
+      commit(switched ? '切换图表类型' : '修改图表数据');
+      /* 用归一化后的数据回填输入框：比如用户多打了一个逗号、空格，
+         normalize 之后已经清掉了，输入框里不该继续留着那些多余符号。
+         renderChartPanel 会把焦点和光标还回去，打字不会被这段回填打断。 */
+      renderChartPanel(selected());
+    }, CHART_LIVE_MS);
+  }
+
+  /* 双击图表：不再弹框，而是把右栏那段唤到眼前（滚过去 + 闪一下 + 聚焦标题框）。
+     用户的肌肉记忆是「双击 = 编辑这张图」，这里只是换了个不挡画布的落点。 */
+  function focusChartPanel() {
+    var sec = $('sec-chart');
+    if (!sec || sec.hidden) return;
+    if (sec.scrollIntoView) sec.scrollIntoView({ block: 'nearest' });
+    sec.classList.remove('flash');
+    void sec.offsetWidth;          /* 强制回流，让动画能重放 */
+    sec.classList.add('flash');
+    var first = $('chf-title');
+    if (first) first.focus();
   }
 
   /* 插入图片：文件 → dataURL → 直接写进画布 */
@@ -1581,6 +2295,23 @@
     P: '¶', UL: '≣', OL: '≣', TABLE: '▦', HR: '─', BUTTON: '▰', SPAN: '▰',
   };
 
+  /* 自插元素用自己的图标（与形状下拉里那一套一致），
+     否则图层面板里笔迹、多边形、曲线全是同一个「▢」，只能靠文字分辨。 */
+  var ADDED_ICONS = {
+    drawn: '✎', poly: '⬡', curve: '◜', connector: '⌐', connectorcurve: '∿',
+    line: '╱', arrow: '⟶', dblarrow: '⟷',
+    rect: '▭', round: '▢', circle: '◯', oval: '⬭', triangle: '△', para: '▱',
+    table: '▦', formula: '√x', image: '▣', video: '▶',
+    bar: '▊', chartline: '⟋', pie: '◔',
+  };
+
+  function layerIcon(node) {
+    var added = node.getAttribute && node.getAttribute('data-wd-added');
+    if (added && ADDED_ICONS[added]) return ADDED_ICONS[added];
+    if (node.getAttribute && node.getAttribute('data-wd-chart-kind')) return '▊';
+    return LAYER_ICONS[node.tagName] || '▢';
+  }
+
   /* 按绘制顺序（先 DOM 后 z-index）列出画布的直接子元素 */
   function layerNodes() {
     var root = rootEl();
@@ -1599,7 +2330,28 @@
       .map(function (x) { return x.node; });
   }
 
+  /* 插入的元素优先报它自己的名字。
+     自由绘制 / 多边形 / 曲线 / 连接线这些是空 div（没有文字），
+     原来一律落到 map 里显示成「容器」—— 图层面板里一整列「容器」，
+     根本分不出哪行是笔迹、哪行是多边形。 */
+  var ADDED_LABELS = {
+    drawn: '自由绘制', poly: '多边形',
+    curve: '曲线', connector: '连接线', connectorcurve: '曲线连接线',
+    line: '直线', arrow: '箭头', dblarrow: '双向箭头',
+    rect: '矩形', round: '圆角矩形', circle: '圆形', oval: '椭圆',
+    triangle: '三角形', para: '平行四边形',
+    table: '表格', formula: '公式',
+    bar: '柱状图', chartline: '折线图', pie: '饼状图',
+    image: '图片', video: '视频',
+    text: '文本框', textv: '竖向文本框',
+    title1: '一级标题', title2: '二级标题', title3: '三级标题', title4: '四级标题',
+  };
+
   function layerLabel(node) {
+    var added = node.getAttribute && node.getAttribute('data-wd-added');
+    if (added && ADDED_LABELS[added]) return ADDED_LABELS[added];
+    var chart = node.getAttribute && node.getAttribute('data-wd-chart-kind');
+    if (chart) return ({ bar: '柱状图', chartline: '折线图', pie: '饼状图' })[chart] || '图表';
     var txt = (node.textContent || '').replace(/\s+/g, ' ').trim();
     if (txt) return txt.slice(0, 22);
     var tag = node.tagName;
@@ -1624,7 +2376,7 @@
         draggable: 'true',
         title: layerLabel(n),
       });
-      row.appendChild(el('span', { class: 'layer-ico', text: LAYER_ICONS[n.tagName] || '▢' }));
+      row.appendChild(el('span', { class: 'layer-ico', text: layerIcon(n) }));
       row.appendChild(el('span', { class: 'layer-name', text: layerLabel(n) }));
 
       var lockBtn = el('button', {
@@ -2255,7 +3007,7 @@
       box,
       el('span', { class: 'rail-num', text: String(i + 1) }),
       el('div', { class: 'rail-actions' }, [
-        el('button', { class: 'mini-btn', title: '复制此页', text: '⧉', onclick: function (ev) { ev.stopPropagation(); store.duplicateSlide(i); goSlide(store.current); } }),
+        el('button', { class: 'mini-btn', title: '复制此页', text: '⧉', onclick: function (ev) { ev.stopPropagation(); duplicateSlide(i); } }),
         el('button', { class: 'mini-btn', title: '删除此页', text: '✕', onclick: function (ev) { ev.stopPropagation(); doDeleteSlide(i); } })
       ])
     ]);
@@ -2361,6 +3113,12 @@
     var token = ++loadingToken;
     clearSelection();
     E.editing = null;
+    /* 换页即退出绘制态。
+       绘制工具是挂在**帧文档**上的，切页会整份换掉帧文档：
+       工具留着的话，用户在新的一页上随手一拖就会画出一条谁也没想要的笔迹
+       （而且此时提示与十字光标都不在，没有任何「还在绘制态」的反馈）。
+       宁可他再点一次菜单，也不要留下一个看不见的、会吃掉拖拽的模式。 */
+    if (global.WD && global.WD.drawTool) global.WD.drawTool.stop();
     /* 有内容时要收起空状态遮罩，否则它盖在舞台上方 */
     $('stage-empty').hidden = true;
     /* 底部状态条的「放映」按钮同理：没有文档可放映时不出现 */
@@ -2420,9 +3178,18 @@
     doc.addEventListener('pointercancel', function () {
       if (marqueeState) onMarqueeEnd();
     }, true);
+    /* 右键菜单：**必须在帧内监听**。
+       右键 MenuContext 不跨文档冒泡 —— 在帧内派发的 contextmenu 到不了父页的
+       #stage-frame（实测 stage-frame / document 上的监听计数都是 0），
+       所以画布上的右键只有这里收得到；父页那个监听只管帧外那一圈留白。
+       坐标这里已经是**帧内坐标**（帧视口≈1920×1080 画布），正好就是 pickAt
+       与 doc.elementFromPoint 认的那一套，不需要再换算。
+       菜单本身仍按父页坐标定位：帧内坐标点 × scale + stageRect 即父页 client 坐标。 */
     doc.addEventListener('contextmenu', function (ev) {
+      var loc = frameToClient(ev.clientX, ev.clientY);
+      if (!loc) return;                 /* 舞台未就绪：保持浏览器默认菜单 */
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY);
+      openCanvasContextMenu(pickAt(ev.clientX, ev.clientY), loc);
     }, true);
     /* 阻止帧内链接跳转 */
     doc.addEventListener('click', function (ev) {
@@ -2450,6 +3217,10 @@
 
   function onFramePointerDown(ev) {
     if (ev.button !== 0) return;
+    /* 绘制态下整条画布事件归 WD.drawTool 管：选区不要动、框选不要起、
+       拖动更不要开始 —— 这里和 capture 阶段抢在 drawTool 之前，
+       早 return 才不会把绘制吞掉。 */
+    if (global.WD && global.WD.drawTool && global.WD.drawTool.active()) return;
     var doc = frameDoc();
     if (E.editing && E.editing.contains(ev.target)) return;
 
@@ -2492,6 +3263,10 @@
 
   function onFramePointerMove(ev) {
     if (E.drag || E.editing) return;
+    /* 绘制态下光标由 WD.drawTool 固定成十字线：
+       这段是「悬停反馈」，它按命中结果改写 body.cursor，
+       会把绘制光标覆盖掉（悬停到文字上就变 I 形，看起来像没进绘制态）。 */
+    if (global.WD && global.WD.drawTool && global.WD.drawTool.active()) return;
     var doc = frameDoc();
     if (!doc) return;
     var hit = pickAt(ev.clientX, ev.clientY);
@@ -2541,10 +3316,20 @@
     ev.preventDefault();
     ev.stopPropagation();
 
-    /* 图表：双击是「改数据」，不是「改字」 */
+    /* 图表：双击是「去右栏改数据」，不是弹框。
+       选区一变，右栏那段就渲染好；双击只负责把它唤到眼前。 */
     if (hit.hasAttribute && hit.hasAttribute('data-wd-chart')) {
       setSelection([hit]);
-      openChartDialog(hit);
+      focusChartPanel();
+      return;
+    }
+
+    /* 公式：双击直接打开 LaTeX 编辑弹窗（带上当前源码）。
+       公式的「内容」是 LaTeX 源（存在 data-wd-latex），不是 DOM textContent —
+       走 textBlockFor 会卡在空的 MathML 上什么也改不了。 */
+    if (hit.getAttribute && hit.getAttribute('data-wd-added') === 'formula') {
+      setSelection([hit]);
+      openLatexDialog(hit.getAttribute('data-wd-latex') || '', hit);
       return;
     }
 
@@ -2644,6 +3429,18 @@
       }
       host.appendChild(b);
     });
+    /* 色板只给「常用的那些」，真要任意色还是得开色盘。
+       这里复用检查器那个「填充」原生取色器（#f-fill）：点它等于点填充色格，
+       input/change 已经有整套落样式 + 撤销的处理，颜色真源只有一处。 */
+    var custom = el('button', {
+      class: 'swatch swatch-pick', title: '自定义颜色…（开色盘）',
+      onclick: function () {
+        var pick = $('f-fill');
+        if (pick) pick.click();
+      }
+    });
+    custom.textContent = '+';
+    host.appendChild(custom);
   }
 
   function initFontOptions() {
@@ -2676,6 +3473,9 @@
 
   function updateInspector() {
     var hasModel = !!store.model;
+    var wasSlide = $('sec-slide').hidden;
+    var wasEl = $('sec-element').hidden;
+    var wasChart = $('sec-chart').hidden;
     $('sec-slide').hidden = !hasModel;
     var hasSel = E.selection.length > 0 && !E.editing;
     $('sec-element').hidden = !hasSel;
@@ -2683,6 +3483,12 @@
     $('insp-title').textContent = hasSel ? '元素属性' : '幻灯片属性';
     updateCtxBar(hasModel, hasSel);
     updateFormatBar();
+
+    /* 分区「刚刚变为相关」时自动展开：选中元素就把元素段摊开，切到页面就把页面段摊开。
+       已经相关的不重复展开（否则每次刷新都会覆盖用户的手动收起）。
+       图层段永远相关，所以这里不碰它。 */
+    if (wasSlide && hasModel) autoExpandSection('sec-slide');
+    if (wasEl && hasSel) autoExpandSection('sec-element');
 
     /* 幻灯片区 */
     if (hasModel) {
@@ -2702,6 +3508,26 @@
     }
 
     if (hasSel) updateInspectorValues();
+    /* 公式专属段：选中公式才显示。`f-formula-row` 的 hidden 跟着节点类型走，
+       不走 sec-element 那一套「业务显隐」—— 公式段落要的是子切换，不是
+       整个元素段切走。 */
+    var node = hasSel ? selected() : null;
+    var fRow = $('f-formula-row');
+    if (fRow) {
+      fRow.hidden = !(node && node.getAttribute('data-wd-added') === 'formula');
+      if (node && node.getAttribute('data-wd-added') === 'formula') {
+        if (document.activeElement !== $('f-formula-src')) {
+          $('f-formula-src').value = node.getAttribute('data-wd-latex') || '';
+        }
+      }
+    }
+    /* 图表数据段：选中的不是图表就整段隐藏（renderChartPanel 负责 hidden 与内容）。
+       必须放在 updateInspectorValues 之后 —— 它要把 sec-chart 的 hidden 状态
+       纳入同一轮刷新，否则取消选中时这段会留在右栏上。 */
+    renderChartPanel(hasSel ? selected() : null);
+    /* 图表段同理：选中图表时它才刚变相关，这时替用户摊开一次。
+       要放在 renderChartPanel 之后 —— 那一步才把 sec-chart 设为可见。 */
+    if (wasChart && !$('sec-chart').hidden) autoExpandSection('sec-chart');
     updateHistoryButtons();
   }
 
@@ -2773,11 +3599,35 @@
     var radius = U.parsePx(cs.borderTopLeftRadius, 0) || 0;
     if (document.activeElement !== $('f-radius')) $('f-radius').value = Math.round(radius);
 
-    setColorField('fill', U.parseColor(cs.backgroundColor), cs.backgroundImage);
+    /* 线条类的颜色/粗细真源在 data-wd-stroke / data-wd-w（见 setStyleSmart），
+       CSS 盒子恒为透明 —— 直接读 computed style 会永远显示「透明 / 0」，
+       检查器就没法回显用户选过的颜色与粗细。 */
+    var isLineShape = WD.elements.isLineKind && WD.elements.isLineKind(node.getAttribute('data-wd-added'));
+    if (isLineShape) {
+      var lineStroke = node.getAttribute('data-wd-stroke') || U.parseColor(cs.backgroundColor);
+      setColorField('fill', lineStroke ? (typeof lineStroke === 'string' ? U.parseColor(lineStroke) : lineStroke) : null);
+      if (document.activeElement !== $('f-border-w')) {
+        $('f-border-w').value = parseFloat(node.getAttribute('data-wd-w')) || U.parsePx(cs.borderTopWidth, 0) || 0;
+      }
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = 'solid';
+    } else if (node.getAttribute('data-wd-added') === 'poly') {
+      /* 多边形：填充=data-wd-fill，描边色=data-wd-stroke，粗细=data-wd-w。
+         盒子恒透明，读 computed style 全是透明，必须回到这些属性上回显。 */
+      var polyFill = node.getAttribute('data-wd-fill');
+      setColorField('fill', polyFill ? U.parseColor(polyFill) : null);
+      var polyStroke = node.getAttribute('data-wd-stroke');
+      setColorField('border-color', polyStroke ? U.parseColor(polyStroke) : null);
+      if (document.activeElement !== $('f-border-w')) {
+        $('f-border-w').value = parseFloat(node.getAttribute('data-wd-w')) || 0;
+      }
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = 'solid';
+    } else {
+      setColorField('fill', U.parseColor(cs.backgroundColor), cs.backgroundImage);
+      setColorField('border-color', U.parseColor(cs.borderTopColor));
+      if (document.activeElement !== $('f-border-w')) $('f-border-w').value = U.parsePx(cs.borderTopWidth, 0) || 0;
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = cs.borderTopStyle === 'none' ? 'none' : cs.borderTopStyle;
+    }
     setColorField('color', U.parseColor(cs.color));
-    setColorField('border-color', U.parseColor(cs.borderTopColor));
-    if (document.activeElement !== $('f-border-w')) $('f-border-w').value = U.parsePx(cs.borderTopWidth, 0) || 0;
-    if (document.activeElement !== $('f-border-style')) $('f-border-style').value = cs.borderTopStyle === 'none' ? 'none' : cs.borderTopStyle;
 
     var fam = U.primaryFamily(cs.fontFamily);
     var fsel = $('f-font');
@@ -2889,6 +3739,46 @@
 
   function setStyleSmart(node, prop, value) {
     prop = toCssProp(prop);
+    /* 线条类（line / arrow / dblarrow / curve / connector / connectorcurve）的
+       「颜色 / 粗细」翻译到 data-wd-stroke / data-wd-w 上，不写 CSS 盒子：
+       它们的盒子必须保持透明（图形是里面的 SVG 画的），而 syncLine 每帧都会
+       把盒子刷成透明 —— 颜色若存在 background-color 上就会被那一步抹掉，
+       表现为「改完颜色，再点一下画布就弹回默认蓝」。
+       在这里统一翻译，检查器 / 格式刷 / 快捷色板所有入口一次覆盖。 */
+    if (WD.elements.isLineKind && WD.elements.isLineKind(node.getAttribute('data-wd-added'))) {
+      if (prop === 'background-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-stroke');
+        else node.setAttribute('data-wd-stroke', value);
+        return;
+      }
+      if (prop === 'border-width' || prop === 'border-top-width') {
+        var wpx = parseFloat(value);
+        if (value === '' || value === null || !(wpx > 0)) node.removeAttribute('data-wd-w');
+        else node.setAttribute('data-wd-w', String(wpx));
+        return;
+      }
+    }
+    /* 多边形（poly）是**闭合**描边图形：盒子恒透明（syncLine 会抹掉 CSS 底色），
+       所以「填充」的真源是 data-wd-fill、「描边颜色」是 data-wd-stroke、「粗细」是
+       data-wd-w —— 都在这里翻译，检查器 / 色板 / 格式刷所有入口一次覆盖。 */
+    if (node.getAttribute('data-wd-added') === 'poly') {
+      if (prop === 'background-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-fill');
+        else node.setAttribute('data-wd-fill', value);
+        return;
+      }
+      if (prop === 'border-color' || prop === 'border-top-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-stroke');
+        else node.setAttribute('data-wd-stroke', value);
+        return;
+      }
+      if (prop === 'border-width' || prop === 'border-top-width') {
+        var pw = parseFloat(value);
+        if (value === '' || value === null || !(pw > 0)) node.removeAttribute('data-wd-w');
+        else node.setAttribute('data-wd-w', String(pw));
+        return;
+      }
+    }
     var style = node.style;
     var shorthands = SHORTHAND_FOR[prop];
     if (shorthands && shorthands.length) {
@@ -3145,6 +4035,38 @@
     /* 自定义 CSS */
     $('btn-css-apply').addEventListener('click', applyCustomCss);
 
+    /* 公式专属：在右栏里直接改 LaTeX 源（input 走防抖，弹窗版立即更新） */
+    var fSrc = $('f-formula-src');
+    if (fSrc) {
+      var fTimer = null;
+      fSrc.addEventListener('input', function () {
+        var n = selected();
+        if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+        var src = fSrc.value;
+        clearTimeout(fTimer);
+        fTimer = setTimeout(function () { updateFormula(n, src); }, 350);
+      });
+    }
+    var fEdit = $('f-formula-edit');
+    if (fEdit) fEdit.addEventListener('click', function () {
+      var n = selected();
+      if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+      openLatexDialog(n.getAttribute('data-wd-latex') || '', n);
+    });
+    var fReset = $('f-formula-reset');
+    if (fReset) fReset.addEventListener('click', function () {
+      var n = selected();
+      if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+      /* 公式本身是 absolute 定位的，把它「重置回默认」 = 居中 560×120
+         （与 insertFormula 的初始尺寸一致），不涉及 LaTeX 改写。 */
+      var s = frameDoc().defaultView.getComputedStyle(n);
+      n.style.left = (parseInt(s.left, 10) || 0) + 'px';
+      n.style.top = (parseInt(s.top, 10) || 0) + 'px';
+      n.style.width = '560px';
+      n.style.height = '120px';
+      refreshOverlay();
+    });
+
     /* 幻灯片属性 */
     $('f-notes').addEventListener('change', function () { store.setNotes(this.value); });
     $('f-notes').addEventListener('blur', function () { store.setNotes(this.value); });
@@ -3166,7 +4088,7 @@
       else setSlideBackground(v, true);
     });
 
-    $('btn-slide-dup').addEventListener('click', function () { store.duplicateSlide(store.current); goSlide(store.current); });
+    $('btn-slide-dup').addEventListener('click', function () { duplicateSlide(store.current); });
     $('btn-slide-del').addEventListener('click', function () { doDeleteSlide(store.current); });
     $('btn-slide-up').addEventListener('click', function () { store.moveSlide(store.current, store.current - 1); goSlide(store.current); });
     $('btn-slide-down').addEventListener('click', function () { store.moveSlide(store.current, store.current + 1); goSlide(store.current); });
@@ -3571,6 +4493,14 @@
       toast('工程文件解析失败，改为按普通 HTML 解析', 'warn');
     }
 
+    /* 早期放映页：没有工程区块，但页数据在脚本里，先展开再走正常流程 */
+    var legacy = WD.parse.parseLegacyViewer(text);
+    if (legacy) {
+      adoptDeck(legacy, fileName);
+      toast('已按放映页兼容展开为 ' + legacy.slides.length + ' 页', 'ok', 4200);
+      return;
+    }
+
     busy('正在解析 HTML…', '定位幻灯片…');
     var t0 = performance.now();
     WD.parse.loadHtml(text, {
@@ -3621,30 +4551,113 @@
     flushNudgeCommit();          /* 待办的微调先落库，否则存出去的是旧状态 */
     syncSlideDoc();
     var html = WD.parse.serializeProject(store.model);
-    U.downloadText(html, U.safeFileName(store.fileName || store.model.title, 'wizdeck') + '.wd.html', 'text/html');
-    store.setDirty(false);
-    updateHistoryButtons();
-    toast('工程已保存（.wd.html，可再次打开继续编辑）', 'ok', 4200);
+    try {
+      localStorage.setItem('wizdeck.model', html);
+      store.setDirty(false);
+      updateHistoryButtons();
+      var kb = (html.length / 1024).toFixed(1);
+      toast('已保存到浏览器（' + kb + ' KB）', 'ok', 3000);
+    } catch (e) {
+      /* QuotaExceededError / SecurityError：常见于隐身模式或被禁用 */
+      toast('保存失败：浏览器本地存储不可用（' + (e && e.name ? e.name : '未知错误') + '）', 'error', 6000);
+    }
   }
 
+  /* 导出为 HTML（工程文件）：WizDeck 原生 .wd.html —— 带 wizdeck-doc 工程区块，
+     用浏览器打开也能方向键翻页，但排版从简；要在 WizDeck 里继续编辑选这个最稳。 */
+  function saveProjectFile() {
+    if (!store.model) { toast('还没有可导出的内容', 'warn'); return; }
+    flushNudgeCommit();
+    syncSlideDoc();
+    var name = U.safeFileName(store.fileName || store.model.title, 'wizdeck');
+    U.downloadText(WD.parse.serializeProject(store.model), name + '.wd.html', 'text/html');
+    toast('已导出工程文件（.wd.html，可再次打开继续编辑）', 'ok', 4200);
+  }
+
+  /* 导出为 HTML：产出一个自包含的单文件放映页 —— 每页仍是完整 HTML 文档，
+     用 iframe 的 srcdoc 承载（与应用内「放映」同一机制），所以：
+       ① 每页各自的 <style>/字体声明都保留（旧实现只取第一页的 head，
+          后面几页的用户样式会被静默丢掉）；
+       ② 一次只显示一页、可左右翻，而不是把所有页竖着堆成一个长滚动条。
+     注意：本文件会被拼进 WizDeck.html 的 <script> 里，所以源码内不能出现字面的
+     闭合 script 标签 —— 下面一律用 '<' + '/script>' 拼出来。 */
   function saveCleanHtml() {
     if (!store.model) { toast('还没有可导出的内容', 'warn'); return; }
     syncSlideDoc();
     var name = U.safeFileName(store.fileName || store.model.title, 'wizdeck');
-    var pages = store.model.slides.map(function (s, i) { return s.doc; }).join('\n');
-    /* 多页合并：保留第一页的 head，其余页的 body 追加 */
-    var first = store.model.slides[0].doc;
-    var head = first.slice(0, first.indexOf('<body'));
-    var tail = '</body>\n</html>';
-    var bodies = store.model.slides.map(function (s) {
-      var b = s.doc;
-      var i0 = b.indexOf('<body');
-      var i1 = b.lastIndexOf('</body>');
-      return i0 >= 0 && i1 > i0 ? b.slice(b.indexOf('>', i0) + 1, i1) : '';
-    }).join('\n');
-    U.downloadText(head + '<body data-wizdeck-pages="' + store.model.slides.length + '">\n' +
-      bodies + '\n' + tail, name + '.html', 'text/html');
-    toast('已导出纯 HTML（' + store.model.slides.length + ' 页内容）', 'ok');
+    var CW = U.CANVAS_W, CH = U.CANVAS_H;
+    var docs = store.model.slides.map(function (s) { return s.doc || ''; });
+    /* 每页正文用 JSON 字面量存，并把所有 < 转成 \u003c：
+       既防内容里的闭合 script 标签提前结束外层脚本，也防标签被当 HTML 解析。 */
+    var closeScript = '<' + '/script>';
+    /* 放映页不再自带 PAGES 副本，而是直接读下面这段 wizdeck-doc 工程区块：
+       人打开 = 可翻页的放映页；WizDeck 打开 = looksLikeProject 命中，无损还原全部页。 */
+    var projectBlock = WD.parse.projectJson(store.model);
+    var html = [
+      '<!DOCTYPE html>',
+      '<html lang="zh-CN">',
+      '<head>',
+      '<meta charset="UTF-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      '<title>' + U.escapeHtml(store.model.title || '智演演示') + '</title>',
+      '<style>',
+      'html,body{margin:0;height:100%;overflow:hidden;background:#0b0f16;',
+      'font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}',
+      '#frame{position:absolute;left:50%;top:50%;width:' + CW + 'px;height:' + CH + 'px;border:0;',
+      'background:#fff;box-shadow:0 18px 60px rgba(0,0,0,.5);',
+      'transform:translate(-50%,-50%) scale(1);transform-origin:50% 50%}',
+      '.wd-hud{position:fixed;right:18px;bottom:16px;display:flex;align-items:center;gap:10px;',
+      'padding:8px 12px;border-radius:999px;background:rgba(20,26,38,.72);color:#e8eefb;',
+      'font-size:13px;user-select:none;opacity:.28;transition:opacity .18s}',
+      '.wd-hud:hover{opacity:1}',
+      '.wd-hud button{width:30px;height:30px;border:0;border-radius:50%;',
+      'background:rgba(255,255,255,.12);color:#e8eefb;font-size:16px;line-height:1;cursor:pointer}',
+      '.wd-hud button:hover:not(:disabled){background:rgba(255,255,255,.24)}',
+      '.wd-hud button:disabled{opacity:.3;cursor:default}',
+      '.wd-hint{position:fixed;left:18px;bottom:20px;color:rgba(232,238,251,.45);font-size:12px}',
+      '</style>',
+      '</head>',
+      '<body>',
+      '<iframe id="frame" title="幻灯片"></iframe>',
+      '<div class="wd-hud">',
+      '<button id="prev" type="button" aria-label="上一页">&#8249;</button>',
+      '<span id="pos">1 / 1</span>',
+      '<button id="next" type="button" aria-label="下一页">&#8250;</button>',
+      '</div>',
+      '<div class="wd-hint">← → / 空格 / 滚轮 翻页 · Home 首页 · End 末页</div>',
+      projectBlock,
+      '<script>',
+      '(function(){',
+      'var blk=document.getElementById("wizdeck-doc");if(!blk)return;',
+      'var m;try{m=JSON.parse(blk.textContent);}catch(e){return}',
+      'var PAGES=(m.slides||[]).map(function(s){return s.doc||"";});',
+      'if(!PAGES.length)return;',
+      'var W=' + CW + ',H=' + CH + ',i=0;',
+      'var frame=document.getElementById("frame"),pos=document.getElementById("pos");',
+      'var prev=document.getElementById("prev"),next=document.getElementById("next");',
+      'function fit(){var s=Math.min((window.innerWidth-48)/W,(window.innerHeight-48)/H);',
+      'if(!isFinite(s)||s<=0)s=1;frame.style.transform="translate(-50%,-50%) scale("+s+")";}',
+      'function show(n){i=Math.max(0,Math.min(PAGES.length-1,n));frame.srcdoc=PAGES[i];',
+      'pos.textContent=(i+1)+" / "+PAGES.length;prev.disabled=i<=0;next.disabled=i>=PAGES.length-1;}',
+      'prev.addEventListener("click",function(){show(i-1);});',
+      'next.addEventListener("click",function(){show(i+1);});',
+      'window.addEventListener("keydown",function(e){',
+      'if(e.key==="ArrowRight"||e.key==="PageDown"||e.key===" "){e.preventDefault();show(i+1);}',
+      'else if(e.key==="ArrowLeft"||e.key==="PageUp"){e.preventDefault();show(i-1);}',
+      'else if(e.key==="Home"){e.preventDefault();show(0);}',
+      'else if(e.key==="End"){e.preventDefault();show(PAGES.length-1);}});',
+      'var lock=0;',
+      'window.addEventListener("wheel",function(e){var now=Date.now();',
+      'if(now-lock<420||Math.abs(e.deltaY)<8)return;lock=now;show(i+(e.deltaY>0?1:-1));},{passive:true});',
+      'window.addEventListener("resize",fit);',
+      'fit();show(0);',
+      '})();',
+      closeScript,
+      '</body>',
+      '</html>'
+    ].join('\n');
+    U.downloadText(html, name + '.html', 'text/html');
+    toast('已导出放映 HTML（' + docs.length + ' 页，可翻页）', 'ok');
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -3867,6 +4880,90 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
+     16.6 右栏分区折叠
+     ──────────────────────────────────────────────────────────────────────
+     右栏越长越难用：想改的那一项常常要滚半天才找到。照 Bento 的做法把每个
+     分区做成可折叠 —— 标题可点、箭头指示开合、状态记在 localStorage 里，
+     刷新之后还是你离开时的样子。
+
+     与 sec.hidden 的关系（唯一容易做错的地方）：
+       sec.hidden        = **业务**决定这一段现在相不相关（选中图表才有图表数据）
+       secBodies[id].hidden = **用户**决定这一段收起来了
+     两者互不覆盖：一个分区可以既「相关」又被用户收起。
+     自动展开只在「分区刚刚变相关、且用户没手动开合过它」时发生 ——
+     否则用户手动收起之后，每点一次画布它就自己弹开。
+     ══════════════════════════════════════════════════════════════════════ */
+
+  var SEC_KEY = 'wizdeck.insp.sections';
+  var secBodies = {};        /* id → 内容容器 */
+  var secClosed = {};        /* id → 是否收起（用户意图） */
+  var secManual = {};        /* id → 用户是否亲手开合过（自动展开要避开） */
+
+  function saveSecState() {
+    try { localStorage.setItem(SEC_KEY, JSON.stringify(secClosed)); } catch (e) { /* 隐身模式等 */ }
+  }
+
+  /* keepOpen：本次是自动展开，别把「程序开合」记成用户的意图 */
+  function setSectionClosed(id, closed, keepOpen) {
+    secClosed[id] = !!closed;
+    var body = secBodies[id];
+    if (body) body.hidden = !!closed;
+    var sec = $(id);
+    var head = sec ? sec.querySelector('.sec-head') : null;
+    if (head) {
+      head.setAttribute('aria-expanded', closed ? 'false' : 'true');
+      head.title = closed ? '展开这一段' : '收起这一段';
+    }
+    if (!keepOpen) { secManual[id] = true; saveSecState(); }
+  }
+
+  function toggleSection(id) { setSectionClosed(id, !secClosed[id], false); }
+
+  /* 分区变相关了就自动展开，但用户亲手收起过的分区不碰 */
+  function autoExpandSection(id) {
+    if (!secClosed[id] || secManual[id]) return;
+    setSectionClosed(id, false, true);
+  }
+
+  /* 把现有的每个 .insp-sec 改造成「可点标题 + 可收起内容」。
+     只动 DOM 结构，不动里面的控件与 id，所以绑定代码一行都不用改。 */
+  function buildInspSections() {
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(SEC_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+    $$('.insp-sec').forEach(function (sec) {
+      var id = sec.id;
+      if (!id) return;
+      var title = sec.querySelector(':scope > .sec-title');
+      if (!title) return;
+      /* 内容整段包一层 .sec-body 才能一起收起。
+         注意**不含** .sec-title —— 标题要留在外面当折叠把手。 */
+      var body = document.createElement('div');
+      body.className = 'sec-body';
+      body.id = id + '-body';
+      Array.prototype.slice.call(sec.children).forEach(function (c) {
+        if (c !== title) body.appendChild(c);
+      });
+
+      /* 标题从 <div> 换成 <button>：可点、可聚焦、键盘 Enter/Space 都能开合。
+         沿用原来的 class，样式不必重写。 */
+      var head = document.createElement('button');
+      head.type = 'button';
+      head.className = title.className + ' sec-head';
+      head.setAttribute('aria-controls', id + '-body');
+      head.innerHTML = title.innerHTML;
+      sec.replaceChild(head, title);
+      sec.appendChild(body);
+
+      secBodies[id] = body;
+      secClosed[id] = !!saved[id];
+      body.hidden = !!secClosed[id];
+      head.setAttribute('aria-expanded', secClosed[id] ? 'false' : 'true');
+      head.title = secClosed[id] ? '展开这一段' : '收起这一段';
+      head.addEventListener('click', function () { toggleSection(id); });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
      17. 示例与帮助
      ══════════════════════════════════════════════════════════════════════ */
 
@@ -3954,12 +5051,14 @@
     if (m) m.hidden = true;
   }
 
-  function buildContextItems(ctx) {
+  function buildContextItems(ctx, forceMulti) {
     ctx = ctx || {};
     var onSlide = ctx.slideIndex !== undefined && ctx.slideIndex !== null;
     var slideIndex = onSlide ? ctx.slideIndex : store.current;
     var hasSel = E.selection.length > 0;
-    var multi = E.selection.length > 1;
+    var multi = forceMulti !== undefined && forceMulti !== null
+      ? !!forceMulti
+      : E.selection.length > 1;
 
     if (onSlide) {
       return [
@@ -4023,11 +5122,20 @@
     return items;
   }
 
-  function openContextMenu(x, y, ctx) {
+  /* 右键菜单定位。
+     坐标统一收口成**父页 client 坐标**：菜单是 position:fixed 的顶层节点，
+     只有父页坐标能直接落到 left/top 上。以前画布那次传的是帧内坐标，
+     两者差一个 stageRect 偏移，菜单就落在帧左上角附近而不是鼠标处。
+     末端再做一次视口钳制：靠近右/下边缘时整体回推，不允许溢出屏幕。
+     菜单比视口还高时把 top 压回 6px（而不是 Math.max(6, 负数) 之外再叠加），
+     保证顶部始终可见 —— 否则顶部条目会被推出视口，菜单看起来"缺了一截"。 */
+  function openContextMenu(opts) {
+    opts = opts || {};
+    var x = opts.x, y = opts.y;
     var menu = $('ctxmenu');
     if (!menu) return;
     menu.innerHTML = '';
-    buildContextItems(ctx).forEach(function (it) {
+    buildContextItems(opts.ctx, opts.forceMulti).forEach(function (it) {
       if (it.sep) { menu.appendChild(el('div', { class: 'ctx-sep' })); return; }
       var btn = el('button', {
         class: 'ctx-item' + (it.danger ? ' danger' : ''), type: 'button'
@@ -4039,10 +5147,13 @@
       menu.appendChild(btn);
     });
 
+    /* 必须先显示再量：offsetWidth/Height 在 display:none 时是 0，
+       钳制会算成「菜单是 0×0」，于是永远不加偏移 */
     menu.hidden = false;
     var w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.min(Math.max(6, x), window.innerWidth - w - 6) + 'px';
-    menu.style.top = Math.min(Math.max(6, y), window.innerHeight - h - 6) + 'px';
+    var gap = 6;
+    menu.style.left = Math.max(gap, Math.min(x, window.innerWidth - w - gap)) + 'px';
+    menu.style.top = Math.max(gap, Math.min(y, window.innerHeight - h - gap)) + 'px';
   }
 
   function insertSlideAt(index) {
@@ -4053,8 +5164,14 @@
   }
 
   function duplicateSlide(index) {
-    store.duplicateSlide(index);
-    loadStage().then(function () { renderRail(); updateInspector(); });
+    var i = (index === undefined) ? store.current : index;
+    /* 先把当前舞台内容写回它自己那一页（此刻 current 仍等于正在显示页，安全）。
+       随后走 loadStage 而不是 goSlide —— goSlide 开头会再 syncSlideDoc 一次，
+       但那时 store.duplicateSlide 已把 current 挪到了副本上，会把「上一页」的画面
+       误写进副本，于是复制出来的不是被复制的那一页。 */
+    syncSlideDoc();
+    store.duplicateSlide(i);
+    loadStage().then(function () { renderRail(); renderRailThumbs(); updateInspector(); });
   }
 
   function selectAllOnSlide() {
@@ -4089,9 +5206,10 @@
       ['缩放 / 旋转', '拖四角手柄 · 拖顶部圆点旋转（按住 Shift 吸附 15°）'],
       ['改文字', '双击元素直接编辑 · Esc 或 Ctrl+Enter 退出'],
       ['复制删除', 'Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+D 再制 · Delete 删除'],
-      ['层级', 'Ctrl+] 上移一层 · Ctrl+[ 下移一层'],
+      ['层级', 'Ctrl+] 上移一层 · Ctrl+[ 下移一层 · 右栏图层段有置顶/置底'],
       ['历史', 'Ctrl+Z 撤销 · Ctrl+Shift+Z 重做'],
-      ['对齐', '多选后用浮动工具条或右键菜单对齐'],
+      ['对齐', '多选后用右键菜单对齐、分布'],
+      ['图表', '选中图表后在右栏「图表数据」里改标题、分类、系列，改完自动生效（双击图表会把那段唤到眼前）'],
       ['插入', '顶栏「文本框 / 标题 / 形状 / 图片 / 视频」'],
       ['查找', 'Ctrl+F 查找文字 · Enter 下一个 · Esc 关闭'],
       ['样式搬运', '顶栏格式刷：选中源元素后点它，再点目标元素'],
@@ -4227,8 +5345,10 @@
     });
 
     /* 顶栏 */
-    /* 顶栏的「打开 HTML」按钮已按要求移除；打开入口现在在
-       空状态的「打开 HTML 文件」按钮、保存与导出菜单里的第一项，以及 Ctrl+O / 拖拽。 */
+    /* 「打开 HTML」的入口定在**两处**：顶栏这个按钮 + 空状态的大按钮，
+       另有 Ctrl+O 与拖拽。「保存与导出」菜单只管保存与导出，不塞「打开」——
+       那段注释曾经写着「入口已移入菜单第一项」，实际菜单里从来没有那一项，
+       顶栏按钮却一直留着，注释和实现对不上，回归按注释写就一直是红的。 */
     var openBtn = $('btn-open'); if (openBtn) openBtn.addEventListener('click', function () { $('file-input').click(); });
     $('btn-open-2').addEventListener('click', function () { $('file-input').click(); });
     $('file-input').addEventListener('change', function () {
@@ -4271,6 +5391,12 @@
     bindPainter();
     bindFind();
 
+    /* 画布绘制工具（自由绘制 / 多边形）的桥。
+       绘制流程本身在 08-draw.js 里自己管监听与预览，但它不该知道
+       检查器、撤销栈、选中态这些 UI 内部事 —— 这里只把需要的几件事交出去。
+       桥必须在 bindInsertMenu 之后、用户可能点菜单之前就位。 */
+    installDrawBridge();
+
     /* 面板折叠
        坑：原来的展开按钮就在面板的 .panel-head 里，而 .panel-head 在折叠时
        是 display:none —— 收起之后按钮跟着消失，再也点不回来。
@@ -4294,21 +5420,6 @@
     };
     E.toggleBothPanels = toggleBothPanels;
 
-    /* 浮层工具条 */
-    $$('#ov-toolbar button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var t = b.getAttribute('data-tb');
-        if (t === 'edit-text') {
-          var n = pickTextBlockInside(selected(), 0, 0) || selected();
-          if (n && (n.textContent || '').trim()) beginTextEdit(n);
-          else toast('这个元素没有可编辑的文字', 'warn');
-        } else if (t === 'dup') duplicateSelection();
-        else if (t === 'front') layerAction('front');
-        else if (t === 'back') layerAction('back');
-        else if (t === 'del') deleteSelection();
-      });
-    });
-
     /* 添加元素已上移到顶栏的「文本框 / 标题 / 形状」插入组 */
 
     /* 图层操作按钮 */
@@ -4326,6 +5437,122 @@
     layerBtn('btn-layer-front', 'front');
     layerBtn('btn-layer-back', 'back');
 
+    /* 图表数据段（右栏）：改一下就重画，没有「应用」按钮。
+       用 input 事件而不是 change —— change 只在失焦时触发，
+       那就退回成「改完点别处才生效」，即时编辑的意义全没了。
+       change 仍然再绑一份，让勾选框这类控件在部分浏览器上也能兜住。 */
+    var chartSec = $('sec-chart');
+    if (chartSec) {
+      ['input', 'change'].forEach(function (t) {
+        chartSec.addEventListener(t, function (ev) {
+          var el = ev.target;
+          if (!el || !el.id) return;
+          if (el.id === 'chf-reset') return;
+          /* 系列下拉是「就地改值」：它决定这个系列按柱还是按线画。
+             走防抖会等 400ms 才变，而重建面板反而会让循环里下一次点不到
+             下一个 select —— 所以**就地**重画，不重建。 */
+          if (el.getAttribute && el.getAttribute('data-f') === 'kind') {
+            applyChartPanelNow(true);
+            return;
+          }
+          scheduleChartLive();
+        });
+      });
+      /* 按钮类（加/删系列与分类、换色、背景色）走 click、不进上面那个 input 委托 ——
+         它们不是输入控件，而且点一下该立刻重画，不该受「停手 0.4 秒」那条防抖约束
+         （用户点完就在等图变，等一下反而像没生效）。 */
+      chartSec.addEventListener('click', function (ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        /* 注意：这里**不能**无条件 ev.preventDefault()。以前那一句会把
+           同一次点击的默认动作一并取消 —— 结果 ① 勾选框「显示图例 / 显示数值」
+           永远打不上勾（checkbox 的切换就是 click 的默认动作），
+           ② 程序 picks[k].click() 触发的原生色盘也被这句挡死。
+           按钮都是 type="button"，本就没有需要阻止的默认行为，直接去掉。 */
+
+        /* 加一个系列：基于面板当前状态追加，再立即落地 */
+        if (t.closest('#chf-add-series')) { chartAddSeries(); return; }
+        /* 加一个分类：给每个系列补一行空值 */
+        if (t.closest('#chf-add-cat')) { chartAddCategory(); return; }
+
+        var delSeries = t.closest('.series-row .chart-del');
+        if (delSeries) { chartRemoveSeries(parseInt(delSeries.getAttribute('data-si'), 10)); return; }
+
+        var delRow = t.closest('#chf-grid .chart-del');
+        if (delRow) { chartRemoveCategory(parseInt(delRow.getAttribute('data-ri'), 10)); return; }
+
+        /* 系列颜色格 */
+        var sw = t.closest('.sw-series');
+        if (sw) {
+          /* 点一下 → 直接开**原生色盘**（渐变着色区 + 吸管 + 色相条 + HEX/RGB），
+             色盘贴着这格弹出。选色由下面 .sw-pick 的 input 监听实时刷图。
+             想快速沿色板轮换（挑一组明显不同的颜色）就 Alt+点。 */
+          var which = sw.getAttribute('data-f') || 'stroke';
+          var picks = sw.parentNode.querySelectorAll('.sw-pick');
+          if (!ev.altKey) {
+            for (var k = 0; k < picks.length; k++) {
+              if ((picks[k].getAttribute('data-f') || 'stroke') !== which) continue;
+              /* 先把色盘对准当前颜色，否则打开时停在旧色上 */
+              var cur0 = sw.getAttribute('data-color') || '';
+              if (/^#[0-9a-f]{3}$/i.test(cur0)) {
+                cur0 = '#' + cur0[1] + cur0[1] + cur0[2] + cur0[2] + cur0[3] + cur0[3];
+              }
+              openColorPickerAt(picks[k], sw, cur0, null);
+              break;
+            }
+            return;
+          }
+          var pal = WD.elements.chartPalette();
+          var cur = sw.getAttribute('data-color') || '';
+          var idx = pal.indexOf(cur);
+          var next = pal[(idx + 1 + pal.length) % pal.length];
+          sw.setAttribute('data-color', next);
+          sw.style.background = next;
+          applyChartPanelNow();
+          return;
+        }
+
+        /* 背景色：无 / 预设 / 自定义 */
+        if (t.closest('#chf-bg-none')) { chartSetBg(''); return; }
+        var bg = t.closest('#chf-bg .sw-bg');
+        if (bg) { chartSetBg(bg.getAttribute('data-color') || ''); return; }
+        if (t.closest('#chf-bg-pick')) { chartPickBg(t.closest('#chf-bg-pick')); return; }
+      });
+
+      /* 原生取色器（色盘）选了色 → 立刻刷图，不走防抖。
+         input 事件在色盘拖动过程中持续触发，所以这一路不被防抖管。 */
+      chartSec.addEventListener('input', function (ev) {
+        var pick = ev.target && ev.target.closest && ev.target.closest('.sw-pick');
+        if (!pick) return;
+        var which = pick.getAttribute('data-f') || 'stroke';
+        /* 同一个 si 下两个 swatch + 两个 picker，按 data-f 找对应的那个 */
+        var sels = pick.parentNode.querySelectorAll('.sw-series');
+        var match = null;
+        for (var i = 0; i < sels.length; i++) {
+          if ((sels[i].getAttribute('data-f') || 'stroke') === which) { match = sels[i]; break; }
+        }
+        if (!match) return;
+        /* input[type=color].value 永远是 #rrggbb，不要再叠一层 # */
+        var hex = pick.value || '#000000';
+        if (hex.charAt(0) !== '#') hex = '#' + hex;
+        match.setAttribute('data-color', hex);
+        match.style.background = hex;
+        applyChartPanelNow();
+      });
+      $('chf-reset').addEventListener('click', function () {
+        var info = chartDataOf(selected());
+        if (!info) { toast('先选中一张图表', 'warn'); return; }
+        if (chartLiveTimer) { clearTimeout(chartLiveTimer); chartLiveTimer = null; }
+        repaintChart(info.img, WD.elements.defaultChartData(info.kind));
+        commit('恢复示例图表');
+        /* 数据已经变了，但签名相同的话 renderChartPanel 会直接返回、
+           输入框里还留着旧值 —— 这里手动作废签名强制重建。 */
+        chartPanelSig = '';
+        renderChartPanel(selected());
+        toast('已恢复为示例数据', 'ok');
+      });
+    }
+
     /* 选择框交互 */
     var frameBox = $('frame-box');
     frameBox.addEventListener('pointerdown', function (ev) {
@@ -4337,25 +5564,284 @@
       beginDrag('move', ev);
       ev.preventDefault();
     });
-    $$('.handle', frameBox).forEach(function (h) {
-      h.addEventListener('pointerdown', function (ev) {
-        if (h.getAttribute('data-h') === 'rot') beginDrag('rotate', ev);
-        else beginDrag('resize', ev);
-        ev.preventDefault();
-        ev.stopPropagation();
-      });
+    /* 手柄指针：用**事件委托**统一处理 —— 多边形的顶点手柄是动态生成的，
+       一次性 forEach 绑不到后来才插入的节点。data-h 决定走哪种拖拽。 */
+    frameBox.addEventListener('pointerdown', function (ev) {
+      var h = ev.target && ev.target.closest && ev.target.closest('.handle');
+      if (!h || !frameBox.contains(h)) return;
+      var kind = h.getAttribute('data-h') || '';
+      if (kind === 'rot') beginDrag('rotate', ev);
+      else if (kind === 'ep-start' || kind === 'ep-end' || kind === 'ep-bend'
+            || kind === 'ep-c1' || kind === 'ep-c2') {
+        beginEndpointDrag(kind, ev);
+      } else if (kind.indexOf('vtx-') === 0) {
+        beginVertexDrag(parseInt(kind.slice(4), 10), ev);
+      } else {
+        beginDrag('resize', ev);
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
     });
 
-    /* 右键菜单：画布与左栏缩略图都可唤起 */
-    $('stage-frame').addEventListener('contextmenu', function (ev) {
+    /* 端点拖动：两点头模型的核心交互。
+       拖起点 / 终点 / 拐点 → 改那个点在**画布上的绝对位置**，
+       然后按三点重新求包围盒、写回元素的位置与尺寸，最后把三点重新归一化成比例。
+       因为盒子是「推」出来的，所以拖出来的是任意角度的斜线 ——
+       这正是「两点为主、可以任意拖动」想要的行为。 */
+    var MIN_LINE_BOX = 8;   /* 包围盒下限：水平线高度为 0 的话手柄会叠在一起没法拖 */
+
+    function beginEndpointDrag(handleKind, ev) {
+      if (E.drag) return;
+      var el = E.selection[0];
+      if (!el) return;
+      var lp = WD.elements.linePointsOf(el);
+      if (!lp) return;
+      var s = E.stage.scale;
+      var startMx = ev.clientX, startMy = ev.clientY;
+      /* 起手时把三点**一次性**换算成画布绝对坐标，后面都在绝对坐标里算 */
+      var box = {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
+        h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
+      };
+      var toAbs = function (p) { return [box.x + p[0] / 100 * box.w, box.y + p[1] / 100 * box.h]; };
+      var startPts = {
+        p1: toAbs(lp.p1),
+        p2: toAbs(lp.p2),
+        bend: lp.bend ? toAbs(lp.bend) : null,
+        c1: lp.c1 ? toAbs(lp.c1) : null,
+        c2: lp.c2 ? toAbs(lp.c2) : null,
+      };
+      var key = handleKind === 'ep-start' ? 'p1'
+        : handleKind === 'ep-end' ? 'p2'
+        : handleKind === 'ep-c1' ? 'c1'
+        : handleKind === 'ep-c2' ? 'c2'
+        : 'bend';
+      if (!startPts[key]) return;
+
+      E.drag = { mode: 'endpoint', handle: handleKind };
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY);
+      ev.stopPropagation();
+
+      function move(e) {
+        /* 事件可能来自父页（手柄本身）或帧文档（指针滑到画布上方之后）。
+           帧内的 clientX/Y 是**帧视口坐标**，要换算回父页坐标再算位移，
+           否则鼠标一进画布，端点就会瞬移。 */
+        var nx = e.clientX, ny = e.clientY;
+        var fw = frameWin();
+        if (fw && e.view === fw) {
+          var sr = E.stage.el.getBoundingClientRect();
+          nx = sr.left + e.clientX * s;
+          ny = sr.top + e.clientY * s;
+        }
+        var dx = (nx - startMx) / s;
+        var dy = (ny - startMy) / s;
+        var pts = {
+          p1: [startPts.p1[0], startPts.p1[1]],
+          p2: [startPts.p2[0], startPts.p2[1]],
+          bend: startPts.bend ? [startPts.bend[0], startPts.bend[1]] : null,
+          c1: startPts.c1 ? [startPts.c1[0], startPts.c1[1]] : null,
+          c2: startPts.c2 ? [startPts.c2[0], startPts.c2[1]] : null,
+        };
+        pts[key][0] += dx;
+        pts[key][1] += dy;
+
+        /* 包围盒只由「锚点 + 肘部拐点」决定：拖切线手柄只改弯曲、不改元素大小。 */
+        var all = [pts.p1, pts.p2];
+        if (pts.bend) all.push(pts.bend);
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        all.forEach(function (p) {
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        /* 太扁就居中撑到下限，否则手柄会叠成一点、拖不回来 */
+        if (maxX - minX < MIN_LINE_BOX) {
+          var mxc = (minX + maxX) / 2;
+          minX = mxc - MIN_LINE_BOX / 2; maxX = mxc + MIN_LINE_BOX / 2;
+        }
+        if (maxY - minY < MIN_LINE_BOX) {
+          var myc = (minY + maxY) / 2;
+          minY = myc - MIN_LINE_BOX / 2; maxY = myc + MIN_LINE_BOX / 2;
+        }
+        var bw = maxX - minX, bh = maxY - minY;
+
+        el.style.left = Math.round(minX) + 'px';
+        el.style.top = Math.round(minY) + 'px';
+        el.style.width = Math.round(bw) + 'px';
+        el.style.height = Math.round(bh) + 'px';
+
+        /* 绝对 → 比例（0~100）。用 round2 收敛浮点噪声，
+           否则来回拖几次比例点会攒出一串 33.333333333 之类的小数。 */
+        var r2 = function (v) { return Math.round(v * 100) / 100; };
+        var norm = function (p) { return [r2((p[0] - minX) / bw * 100), r2((p[1] - minY) / bh * 100)]; };
+        el.setAttribute('data-wd-p1', JSON.stringify(norm(pts.p1)));
+        el.setAttribute('data-wd-p2', JSON.stringify(norm(pts.p2)));
+        if (pts.bend) el.setAttribute('data-wd-bend', JSON.stringify(norm(pts.bend)));
+        if (pts.c1) el.setAttribute('data-wd-c1', JSON.stringify(norm(pts.c1)));
+        if (pts.c2) el.setAttribute('data-wd-c2', JSON.stringify(norm(pts.c2)));
+
+        refreshOverlay();
+      }
+      function up() {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        window.removeEventListener('blur', up, true);
+        var d = frameDoc();
+        if (d) {
+          d.removeEventListener('pointermove', move, true);
+          d.removeEventListener('pointerup', up, true);
+          d.removeEventListener('pointercancel', up, true);
+        }
+        var w = frameWin();
+        if (w) { w.removeEventListener('pointerup', up, true); w.removeEventListener('blur', up, true); }
+        E.drag = null;
+        var commitLabel = handleKind === 'ep-start' ? '调整起点'
+          : handleKind === 'ep-end' ? '调整终点'
+          : handleKind === 'ep-bend' ? '调整拐点'
+          : handleKind === 'ep-c1' ? '调整起点切线'
+          : handleKind === 'ep-c2' ? '调整终点切线'
+          : '调整端点';
+        commit(commitLabel);
+      }
+      /* ★ 必须同时在**父页和帧内**监听。
+         端点手柄在父页，但拖动过程中手柄本身会跟着刷新、移走；
+         松手时指针底下很可能已经是 iframe 了 —— 那一刻 pointerup 落在
+         **帧文档**里，父页 window 根本收不到，于是 E.drag 永远清不掉，
+         表现为「第一次拖有效，之后再拖就完全没反应」（beginEndpointDrag
+         开头有 if (E.drag) return）。拖到窗口外松手也一样，所以补 blur 兜底。 */
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+      window.addEventListener('blur', up, true);
+      var fd = frameDoc();
+      if (fd) {
+        fd.addEventListener('pointermove', move, true);
+        fd.addEventListener('pointerup', up, true);
+        fd.addEventListener('pointercancel', up, true);
+      }
+      var fw = frameWin();
+      if (fw) { fw.addEventListener('pointerup', up, true); fw.addEventListener('blur', up, true); }
+    }
+
+    /* 顶点拖动：多边形闭合后逐个改形状。
+       与端点拖动同一套「绝对坐标里搬一个点 → 重算包围盒 → 全部点重新归一化」的模型，
+       区别只是点是任意多个（存 data-wd-points），且拖的是第 index 个顶点。
+       非拖动点保持画布位置不变，所以拖动某个顶点时其余顶点原地不动、只有包围盒跟着胀缩。 */
+    function beginVertexDrag(index, ev) {
+      if (E.drag || !(index >= 0)) return;
+      var el = E.selection[0];
+      if (!el || !WD.elements.verticesOf) return;
+      var verts = WD.elements.verticesOf(el);
+      if (!verts.length || index >= verts.length) return;
+      var s = E.stage.scale;
+      var startMx = ev.clientX, startMy = ev.clientY;
+      var box = {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
+        h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
+      };
+      var toAbs = function (p) { return [box.x + p[0] / 100 * box.w, box.y + p[1] / 100 * box.h]; };
+      var startAbs = verts.map(toAbs);
+
+      E.drag = { mode: 'vertex', index: index };
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      function move(e) {
+        var nx = e.clientX, ny = e.clientY;
+        var fw = frameWin();
+        if (fw && e.view === fw) {
+          var sr = E.stage.el.getBoundingClientRect();
+          nx = sr.left + e.clientX * s;
+          ny = sr.top + e.clientY * s;
+        }
+        var dx = (nx - startMx) / s;
+        var dy = (ny - startMy) / s;
+        var abs = startAbs.map(function (p) { return [p[0], p[1]]; });
+        abs[index][0] += dx;
+        abs[index][1] += dy;
+
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        abs.forEach(function (p) {
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        if (maxX - minX < MIN_LINE_BOX) {
+          var mxc = (minX + maxX) / 2;
+          minX = mxc - MIN_LINE_BOX / 2; maxX = mxc + MIN_LINE_BOX / 2;
+        }
+        if (maxY - minY < MIN_LINE_BOX) {
+          var myc = (minY + maxY) / 2;
+          minY = myc - MIN_LINE_BOX / 2; maxY = myc + MIN_LINE_BOX / 2;
+        }
+        var bw = maxX - minX, bh = maxY - minY;
+
+        el.style.left = Math.round(minX) + 'px';
+        el.style.top = Math.round(minY) + 'px';
+        el.style.width = Math.round(bw) + 'px';
+        el.style.height = Math.round(bh) + 'px';
+
+        var r2 = function (v) { return Math.round(v * 100) / 100; };
+        var norm = function (p) { return [r2((p[0] - minX) / bw * 100), r2((p[1] - minY) / bh * 100)]; };
+        el.setAttribute('data-wd-points', JSON.stringify(abs.map(norm)));
+        WD.elements.syncLine(el);
+        refreshOverlay();
+      }
+      function up() {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        window.removeEventListener('blur', up, true);
+        var d = frameDoc();
+        if (d) {
+          d.removeEventListener('pointermove', move, true);
+          d.removeEventListener('pointerup', up, true);
+          d.removeEventListener('pointercancel', up, true);
+        }
+        var w = frameWin();
+        if (w) { w.removeEventListener('pointerup', up, true); w.removeEventListener('blur', up, true); }
+        E.drag = null;
+        commit('调整顶点 ' + (index + 1));
+      }
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+      window.addEventListener('blur', up, true);
+      var fd = frameDoc();
+      if (fd) {
+        fd.addEventListener('pointermove', move, true);
+        fd.addEventListener('pointerup', up, true);
+        fd.addEventListener('pointercancel', up, true);
+      }
+      var fw2 = frameWin();
+      if (fw2) { fw2.addEventListener('pointerup', up, true); fw2.addEventListener('blur', up, true); }
+    }
+
+    /* ══ 右键菜单：画布与左栏缩略图都可唤起 ══
+       画布上的右键实际由**帧内**监听接住（见 bindFrameEvents —— 右键事件不跨文档
+       冒泡），这一段负责帧外那一圈留白，以及左栏缩略图。两处最终都落到
+       openCanvasContextMenu()，保证菜单内容与"右键的那个对象"永远一致。 */
+    $('stage-frame').addEventListener('contextmenu', function (ev) {
+      var p = clientToFrame(ev.clientX, ev.clientY);
+      ev.preventDefault();
+      /* 舞台还没就绪时没有帧内坐标可用，退化成纯位置菜单（不碰选区） */
+      openCanvasContextMenu(p ? p.hit : null, { x: ev.clientX, y: ev.clientY });
     });
     $('rail').addEventListener('contextmenu', function (ev) {
       var item = ev.target.closest ? ev.target.closest('.rail-item') : null;
       if (!item) return;
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY, { slideIndex: Number(item.getAttribute('data-index')) });
+      var idx = Number(item.getAttribute('data-index'));
+      /* 左栏同理：菜单描述的必须是右键那一页，所以先把舞台切过去 */
+      if (isFinite(idx) && idx !== store.current) goSlide(idx);
+      openContextMenu({ x: ev.clientX, y: ev.clientY, ctx: { slideIndex: idx } });
     });
 
     /* 模态 / 放映关闭 */
@@ -4449,6 +5935,10 @@
 
     bindInspector();
     bindFormatBar();
+    /* 分区折叠的 DOM 改造要在 bindInspector 之后做：
+       那一步只搬节点、不重建控件，已经绑好的事件处理器跟着节点一起搬家，不会失效。
+       放在这里也保证了首次 updateInspector 之前分区结构已经就位。 */
+    buildInspSections();
     setStatusHint(null);
     updateZoomLabel();
     updateHistoryButtons();
@@ -4525,13 +6015,12 @@
       ev.stopPropagation();
       showMenu(trigger, menu, function (m) {
         [
-          /* 顶栏的「打开 HTML」按钮已按要求移除，
-             打开入口收进这个文件菜单 —— 否则载入文档之后就再也没法换文件了。
-             快捷键 Ctrl+O 与拖拽仍然有效。 */
-          { ico: '📂', txt: '打开 HTML 文件', hint: 'Ctrl+O', run: function () { $('file-input').click(); } },
-          { ico: '💾', txt: '保存工程（.wd.html）', hint: 'Ctrl+S', run: saveProject },
-          { ico: '🗎', txt: '导出 HTML', hint: '', run: saveCleanHtml },
-          { ico: '📊', txt: '导出 PPTX', hint: 'Ctrl+E', run: doExportPptx },
+          /* 顶栏有「打开」按钮 + 空状态「打开 HTML 文件」按钮 + Ctrl+O + 拖拽，
+             四条入口都只做一件事：点 $('file-input').click() -> change -> readFile。 */
+          { ico: '💾', txt: '保存', hint: 'Ctrl+S', run: saveProject },
+          { ico: '🗎', txt: '导出为 HTML（放映页）', hint: '', run: saveCleanHtml },
+          { ico: '📦', txt: '导出为 HTML（工程文件）', hint: '', run: saveProjectFile },
+          { ico: '📊', txt: '导出为 Power Point', hint: 'Ctrl+E', run: doExportPptx },
         ].forEach(function (it) {
           var b = el('button', { class: 'menu-item', type: 'button' });
           b.appendChild(el('span', { class: 'mi-ico', text: it.ico }));
@@ -4546,6 +6035,10 @@
 
   /* 插入组：「形状」下拉。图标是 Unicode 几何符号 ——
      它们只占 16px 的一格，右边还有文字说明，不需要自己画一套 SVG。 */
+  /* 形状下拉。分组用 menu-sep 隔开（几何 → 一维 → 曲线族），
+     顺序与 PowerPoint / Bento 一致：先基本形状，再线条，最后是曲线与自由形状。
+     线条与曲线族的图标刻意选成「看得出来是哪种线」的：
+     曲线是弧、连接线是折角、曲线连接线是 S、自由绘制是随手一笔、多边形是六边形。 */
   var SHAPE_KINDS = [
     { k: 'rect', ico: '▭', txt: '矩形' },
     { k: 'round', ico: '▢', txt: '圆角矩形' },
@@ -4553,9 +6046,16 @@
     { k: 'oval', ico: '⬭', txt: '椭圆' },
     { k: 'triangle', ico: '△', txt: '三角形' },
     { k: 'para', ico: '▱', txt: '平行四边形' },
-    { k: 'line', ico: '─', txt: '直线' },
+    { k: 'poly', ico: '⬡', txt: '多边形', draw: true },
+    { sep: true },
+    { k: 'line', ico: '╱', txt: '直线' },
     { k: 'arrow', ico: '⟶', txt: '箭头' },
     { k: 'dblarrow', ico: '⟷', txt: '双向箭头' },
+    { sep: true },
+    { k: 'curve', ico: '◜', txt: '曲线' },
+    { k: 'connector', ico: '⌐', txt: '连接线' },
+    { k: 'connectorcurve', ico: '∿', txt: '曲线连接线' },
+    { k: 'drawn', ico: '✎', txt: '自由绘制', draw: true },
     /* 图片 / 视频不混在这里 —— 它们要弹文件选择器、是「独立能力」而不是「形状」，
        混在形状里既容易被误点，也让这个下拉名不副实。已上移为顶栏两个按钮。 */
   ];
@@ -4593,7 +6093,10 @@
   /* 插入组的通用下拉：文本框 / 标题 / 形状 / 公式 / 图表。
      条目样式与「保存与导出」完全一致 —— **左边图标、右边文字**。
      以前这里是一排只有符号的方块：四个「H」并排放在一起，
-     哪个是一级哪个是四级全靠猜；中文标签被藏在 title 里，得把鼠标停上去等一秒才读得到。 */
+     哪个是一级哪个是四级全靠猜；中文标签被藏在 title 里，得把鼠标停上去等一秒才读得到。
+
+     kinds 里 { sep:true } 是分组分隔线；{ draw:true } 表示这个形状要在画布上
+     拖 / 点着画（自由绘制、多边形），点它只切换到绘制态，元素由 WD.drawTool 落地。 */
   function bindKindMenu(triggerId, menuId, kinds) {
     var trigger = $(triggerId);
     var menu = $(menuId);
@@ -4603,10 +6106,16 @@
       showMenu(trigger, menu, function (m) {
         var row = el('div', { class: 'shape-row' });
         kinds.forEach(function (s) {
+          if (s.sep) { row.appendChild(el('div', { class: 'menu-sep' })); return; }
           var b = el('button', { class: 'menu-item', type: 'button', title: s.txt });
           b.appendChild(el('span', { class: 'mi-ico', text: s.ico }));
           b.appendChild(el('span', { class: 'mi-txt', text: s.txt }));
-          b.addEventListener('click', function () { closeMenus(); addElement(s.k); });
+          if (s.draw) b.appendChild(el('span', { class: 'mi-hint', text: '画布上拖/点' }));
+          b.addEventListener('click', function () {
+            closeMenus();
+            if (s.draw && WD.drawTool) WD.drawTool.start(s.k);
+            else addElement(s.k);
+          });
           row.appendChild(b);
         });
         m.appendChild(row);

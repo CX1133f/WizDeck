@@ -344,7 +344,7 @@ console.log('\n[B2] 顶栏按钮增删');
       fmtIdx: kids.indexOf(document.getElementById('fmt-group')),
     };
   })()`);
-  check('顶栏「打开 HTML」按钮已删除', !t.hasOpen, JSON.stringify(t.hasOpen));
+  check('顶栏保留「打开 HTML」入口（与空状态各一处）', t.hasOpen === true, JSON.stringify(t.hasOpen));
   check('顶栏「面板」按钮已删除', !t.hasPanels, JSON.stringify(t.hasPanels));
   check('「载入示例课件」按钮已删除', !t.hasSample2, String(t.hasSample2));
   check('独立的「有未保存修改」徽章已删除', !t.hasDirtyBadge, String(t.hasDirtyBadge));
@@ -359,7 +359,8 @@ console.log('\n[B2] 顶栏按钮增删');
   check('视频文件选择器存在', t.videoInput);
   check('file-input 仍在（打开功能的落点）', t.fileInput);
 
-  /* 形状下拉：9 种真正的形状（图片/视频已上移为独立按钮；横线/标签已换成线条与新形状） */
+  /* 形状下拉：14 种（图片/视频已上移为独立按钮；横线/标签已换成线条与新形状）；
+     本轮新增 多边形 / 曲线 / 连接线 / 曲线连接线 / 自由绘制 */
   const sh = await ev(`(() => {
     document.getElementById('btn-insert-shape').click();
     const n = document.querySelectorAll('#menu-insert .shape-row button');
@@ -367,9 +368,12 @@ console.log('\n[B2] 顶栏按钮增删');
     document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     return out;
   })()`);
-  check('形状下拉共 9 种', sh.count === 9, JSON.stringify(sh));
+  check('形状下拉共 14 种', sh.count === 14, JSON.stringify(sh));
   check('形状下拉里没有「图片」「视频」「横线」「标签」',
     !/图片|视频|横线|标签/.test(sh.titles.join(',')), sh.titles.join(','));
+  check('含 曲线 / 连接线 / 曲线连接线 / 自由绘制 / 多边形',
+    ['曲线', '连接线', '曲线连接线', '自由绘制', '多边形']
+      .every((t) => sh.titles.indexOf(t) >= 0), sh.titles.join(','));
   check('含 椭圆 / 三角形 / 平行四边形 / 直线 / 箭头 / 双向箭头',
     ['椭圆', '三角形', '平行四边形', '直线', '箭头', '双向箭头'].every((t) => sh.titles.indexOf(t) >= 0),
     sh.titles.join(','));
@@ -402,7 +406,9 @@ console.log('\n[B2] 顶栏按钮增删');
   check('新增 表格 / 公式 / 图表 三个顶栏按钮',
     newBtns.table && newBtns.formula && newBtns.chart, JSON.stringify(newBtns));
 
-  /* 保存与导出：打开入口并入，且排在第一位 */
+  /* 保存与导出：只管保存与导出。
+     「打开 HTML」入口放在顶栏和空状态两处（用户定的方案），
+     不再往这个菜单里塞 —— 菜单名是「保存与导出」，塞个「打开」名不副实。 */
   const sm = await ev(`(() => {
     document.getElementById('btn-save-menu').click();
     const items = Array.from(document.querySelectorAll('#menu-save .menu-item')).map(b => b.textContent.trim());
@@ -410,9 +416,29 @@ console.log('\n[B2] 顶栏按钮增删');
     return items;
   })()`);
   check('保存与导出共 4 项', sm.length === 4, JSON.stringify(sm));
-  check('第一项是「打开 HTML 文件」', /打开 HTML/.test(sm[0] || ''), JSON.stringify(sm));
-  check('仍含 保存工程 / 导出 HTML / 导出 PPTX',
-    /保存工程/.test(sm[1] || '') && /HTML/.test(sm[2] || '') && /PPTX/.test(sm[3] || ''), JSON.stringify(sm));
+  check('★ 菜单里没有「打开」——入口只在顶栏与空状态',
+    !sm.some((t) => /打开/.test(t)), JSON.stringify(sm));
+  check('四项依次是 保存 / 导出 HTML 放映页 / 导出 HTML 工程文件 / 导出 PPTX',
+    /保存/.test(sm[0] || '') && /HTML/.test(sm[1] || '') &&
+    /工程文件/.test(sm[2] || '') && /Power\s*Point|PPTX/.test(sm[3] || ''), JSON.stringify(sm));
+  const openEntries = await ev(`(() => ({
+    top: !!document.getElementById('btn-open'),
+    topLabel: (document.getElementById('btn-open') || {}).textContent || '',
+    topTitle: (document.getElementById('btn-open') || {}).title || '',
+    empty: !!document.getElementById('btn-open-2'),
+    inMenu: !!document.querySelector('#menu-save .menu-item[data-open]'),
+    dupIds: (function () {
+      const seen = {}, dup = [];
+      Array.from(document.querySelectorAll('[id]')).forEach((n) => {
+        if (seen[n.id]) dup.push(n.id); else seen[n.id] = 1;
+      });
+      return dup;
+    })(),
+  }))()`);
+  check('★ 「打开」入口恰好两处：顶栏（图标+文字+title）与空状态',
+    openEntries.top && openEntries.empty && !openEntries.inMenu &&
+    /打开/.test(openEntries.topLabel) && /Ctrl\+O/.test(openEntries.topTitle), JSON.stringify(openEntries));
+  check('页面里没有重复 id', openEntries.dupIds.length === 0, JSON.stringify(openEntries.dupIds));
 }
 
 console.log('\n[B2b] 未保存提示：文件名胶囊上那个点');

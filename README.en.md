@@ -12,7 +12,7 @@ WizDeck parses an HTML document into slides, lets you fix layout and wording in 
 workbench, then exports a **genuinely editable `.pptx`** — text becomes real text boxes,
 not images.
 
-The deliverable is **`WizDeck.html`** in the repository root (about 634 KB). Double-click it
+The deliverable is **`WizDeck.html`** in the repository root (about 810 KB). Double-click it
 and you're running: no network, no install.
 
 ---
@@ -51,7 +51,7 @@ and `samples/cw_33.html`.
 **Rebuilding the single file after a source change**
 
 ```bash
-node build.mjs      # assembles the 7 JS files + shell.html + styles.css into one HTML
+node build.mjs      # assembles the 8 JS files + shell.html + styles.css into one HTML
 ```
 
 `build.mjs` also runs a **self-containment check** (no external script / style / font
@@ -70,16 +70,35 @@ Everything in the top-bar insert group is a "icon on the left, label on the righ
 | --- | --- |
 | **Text box** | Horizontal · Vertical |
 | **Title** | Level 1 · Level 2 · Level 3 · Level 4 |
-| **Shape** | Rectangle · Rounded rectangle · Circle · Ellipse · Triangle · Parallelogram · Line · Arrow · Double arrow |
+| **Shape** | Rectangle · Rounded rectangle · Circle · Ellipse · Triangle · Parallelogram · **Polygon** · Line · Arrow · Double arrow · **Curve · Connector · Curve connector · Freehand** |
 | **Table** | Dialog for rows/columns; can keep adding/removing rows and columns in the right panel afterwards; **double-click any cell to edit** (header and data rows alike) |
 | **Formula** | Insert formula · Insert LaTeX (dialog with live preview) |
-| **Chart** | Bar · Line · Pie; **double-click opens a data sheet** to edit title / categories / series values, redrawn immediately |
+| **Chart** | Bar · Line · Pie; select one and edit title / categories / series values in the **"Chart data" section of the right panel** — the chart redraws 0.4s after you stop typing (double-clicking the chart scrolls that section into view) |
 | Image · Video | Straight to the system file picker |
 
 Shapes carry **constraints**: a circle locks its aspect ratio (always stays round), an ellipse
-stretches freely, and lines / arrows / double arrows lock their height (6 / 26 / 26px) —
-handles that would be meaningless are hidden outright, rather than offering buttons that do
-nothing.
+stretches freely, lines / arrows / double arrows lock their shaft height and keep only their two
+endpoints draggable, curves / curve connectors keep a minimum height (too flat and the arc stops
+reading), and **freehand / polygon** scale proportionally (the stroke stores ratio points against
+its original bounding box, so stretching never squashes it). Handles that would be meaningless are
+hidden outright, rather than offering buttons that do nothing.
+
+**Curve / curve connector** are a **cubic Bézier**: two endpoints set size and position, and each
+end carries a **tangent handle** (shown as a small square with a dashed spoke when selected). Drag a
+tangent handle and you only change that end's bend direction and amount without stretching the
+shape; drag an endpoint to resize. A legacy "single bend" curve upgrades to this model automatically
+the moment it's opened (the bend converts losslessly into two tangents), so old projects stay
+editable.
+
+**Polygon / freehand** are drawn straight on the canvas: freehand is one press-and-drag stroke; a
+polygon is built point by point with clicks, then closed by double-click / Enter / clicking back on
+the first point (it highlights and snaps when you get near it) — `Esc` cancels, and while you draw
+there's a dashed rubber band and a point-by-point reveal animation. A polygon **exits the tool as
+soon as it closes**, so the next one needs a fresh click on the menu — it won't silently start a
+second shape while you think you've stopped. Once drawn, shapes stay **editable on selection**: every
+polygon vertex is a draggable handle that recomputes the bounding box on the fly, curves expose
+their endpoints and tangents, and a **polygon can be filled** (pick a background in the panel's
+"Fill", with stroke colour and width controlled independently); freehand is treated as a stroke.
 
 ### Second row: a contextual bar that follows the selection
 
@@ -215,7 +234,7 @@ that combination reproduces most faithfully.
 ## Repository layout
 
 ```
-WizDeck.html               ← the deliverable: single-file app (assembled by build.mjs, ~634 KB)
+WizDeck.html               ← the deliverable: single-file app (assembled by build.mjs, ~810 KB)
 build.mjs                  ← assembly script + self-containment check
 build/
   shell.html               ← UI shell (logo and favicon are inlined here as data URIs)
@@ -226,8 +245,10 @@ build/
   js/04-render.js          ← frame documents, pixel rasterization (SVG foreignObject), stage, thumbnails
   js/05-pptx.js            ← PPTX exporter (ZIP + OOXML + DOM→shape mapping)
   js/06-ui.js              ← workbench UI and all editing interactions
-  js/07-elements.js        ← element layer: shape constraints, line SVG, table factory,
-                              LaTeX→MathML parser, canvas chart rendering
+  js/07-elements.js        ← element layer: shape constraints, line / curve / polygon SVG,
+                              table factory, LaTeX→MathML parser, canvas chart rendering
+  js/08-draw.js            ← canvas draw tools: freehand (one dragged stroke),
+                              polygon (point-by-point, closes then releases the tool)
 brand/                     ← brand logo assets and cut-out results
 samples/
   sample-fractions.html    ← 6-page sample deck
@@ -254,7 +275,7 @@ powershell -ExecutionPolicy Bypass -File tools/run-regressions.ps1
 > product bug but is an environment problem.
 > To run a subset use `-Command "& '.\tools\run-regressions.ps1' -Only @('a.mjs','b.mjs')"`.
 
-Current status: **12 suites · 522 assertions · 0 failures · zero console errors**.
+Current status: **12 suites · 598 assertions · 0 failures · zero console errors**.
 Every interaction assertion dispatches **real mouse and keyboard events** rather than calling
 internal functions directly.
 
@@ -265,11 +286,11 @@ internal functions directly.
 | `cursor-test.mjs` | 27 | Cursor feedback, rotation, grab-point fidelity |
 | `textpos-test.mjs` | 23 | Text positioning accuracy, interaction feel, top-bar format bar |
 | `panel-test.mjs` | 26 | Panel collapse / expand (including "can you reopen it"), animation settling, frame-by-frame follow is monotonic, zero writes after settling, content is never sliced in half |
-| `topbar-test.mjs` | 147 | Flat top bar, repeatable dropdown open/close, button changes, horizontal scroll, no clipping, present button relocated to the bottom, contextual second row: three states and the width budget, presentation mode fully visible at every resolution |
+| `topbar-test.mjs` | 163 | Flat top bar, repeatable dropdown open/close, button changes, horizontal scroll, no clipping, present button relocated to the bottom, contextual second row: three states and the width budget, presentation mode fully visible at every resolution, button feel (cursor / title / hit area >= 24px / exactly one transition duration app-wide), presentation mouse navigation (end-of-deck greying, paging, first/last jump, fullscreen without throwing) |
 | `video-test.mjs` | 20 | Builds a real WebM through the full insert path, poster is not black, survives reopening |
-| `ovbar-test.mjs` | 19 | Floating selection toolbar: constant screen size, counter-scale, no edge clipping |
+| `overlay-test.mjs` | 19 | Zero occlusion over a selected element (the topmost hit at 9 sample points is the canvas itself), zero occlusion at every zoom level, no overflow at the canvas edges, and the five operations formerly on the floating toolbar still work without it (Ctrl+D / Delete / Ctrl+] / Ctrl+[ / double-click); sections marked `hidden` in the inspector really disappear |
 | `latex-test.mjs` | 37 | LaTeX → MathML parser (pure node, no browser) |
-| `elements-test.mjs` | 100 | Shape constraints, four title levels, horizontal/vertical text boxes, table rows/columns and cell editing, formulas, three chart types and their data sheet, rasterized alpha coverage, dropdown icon+label |
+| `elements-test.mjs` | 160 | Shape constraints, four title levels, horizontal/vertical text boxes, table rows/columns and cell editing, formulas, three chart types and their data sheet, debounced data refill that never disrupts the caret, rasterized alpha coverage, dropdown icon+label, **the five new shapes (curve / connector / curve connector / freehand / polygon), the full canvas drawing flow, cubic-Bézier tangent-handle dragging, per-vertex polygon editing and polygon fill, legacy bend-to-cubic auto-upgrade, and the inspector's chart-type / colour controls** |
 | `ui-smoke.mjs` | 46 | Workbench shell: top-bar structure, panel handles, handle sizes, find, format painter, zoom |
 | `pattern-test.mjs` | 4 | Slide splitting (4 conventions) |
 
@@ -298,11 +319,11 @@ diagnostic probes (`*-probe.mjs`) for pinpointing problems; they are not part of
   older Chromium degrades to showing the source text — a single offline file cannot bundle
   KaTeX.
 - **Charts export as PNG images** (`p:pic`). Inside the workbench they are fully editable
-  (double-click to change data, redrawn instantly), but in the exported PPTX they are images
+  (edit data in the right panel, redrawn automatically), but in the exported PPTX they are images
   and the data sheet cannot be opened.
-- **Triangles, parallelograms, lines, arrows and double arrows also export as images**
-  (they rely on `clip-path` or inline SVG and have no matching `prstGeom` preset) —
-  pixel-identical, but not editable afterwards.
+- **Triangles, parallelograms, lines, arrows, double arrows, curves, connectors, curve connectors,
+  polygons and freehand strokes also export as images** (they rely on `clip-path` or inline SVG and
+  have no matching `prstGeom` preset) — pixel-identical, but not editable afterwards.
 - **Source pages are not normalized in size.** A 1280×720 page is scaled proportionally and
   centered with letterboxing — never stretched. Preserving layout beats filling the canvas.
 - **Video keeps only its poster frame**, and neither the project file nor the PPTX embeds the

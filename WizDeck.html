@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -94,10 +94,13 @@ html[data-theme="dark"] {
 * { box-sizing: border-box; }
 
 /* 关键：下面这些元素用 display:grid/flex 布局，会盖掉浏览器默认的 [hidden]{display:none}，
-   必须显式补一条规则；否则「隐藏」状态仍然平铺在界面上，挡住整个工作台。 */
+   必须显式补一条规则；否则「隐藏」状态仍然平铺在界面上，挡住整个工作台。
+   ⚠ `.insp-sec`（右栏的每一段）也是 display:flex —— 漏掉它的话，
+   右栏的「元素属性 / 图表数据」段设了 hidden 也照样显示得出来，
+   而测试只查 el.hidden 属性，查不到这种「属性是 true、屏幕上还在」。 */
 .busy[hidden], .modal[hidden], .present[hidden], .toasts[hidden],
 .stage-empty[hidden], .rail-empty[hidden], .frame[hidden],
-.marquee[hidden], .ov-toolbar[hidden], .ctxmenu[hidden] { display: none !important; }
+.marquee[hidden], .ctxmenu[hidden], .insp-sec[hidden] { display: none !important; }
 
 /* ── 右键菜单 ───────────────────────────────────────────────────────── */
 .ctxmenu {
@@ -440,6 +443,13 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 }
 .sidebar > .panel-collapse { right: -1px; border-right: 0; border-radius: 10px 0 0 10px; }
 .inspector > .panel-collapse { left: -1px; border-left: 0; border-radius: 0 10px 10px 0; }
+
+/* 收起拉手是「上下居中」的，会横穿面板中间那一段；它又贴着面板**内侧**
+   （右栏的左边、左栏的右边），正好压在内容上：
+   滚到中间时，段标题第一个字缺一角，输入框/缩略图左缘的点也没反应。
+   这里把内容整列让开拉手那一竖条 —— 与其把拉手藏起来，不如让内容不去那儿。 */
+.inspector > .panel-head, .inspector > .insp-body { padding-left: 30px; }
+.sidebar > .rail { padding-right: 28px; }
 .panel-collapse:hover { background: var(--chrome-2); color: var(--ink); width: 24px; box-shadow: var(--shadow-2); }
 .panel-collapse:active { transform: scale(.94); }
 .panel-collapse[hidden] { display: none !important; }
@@ -609,7 +619,13 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
   box-shadow: 0 0 0 1px rgb(255 255 255 / .6);
   pointer-events: none;
 }
+/* 端点手柄允许越出选择框：斜线的两端就落在盒子的角上，
+   手柄本身有 14px 直径，不允许溢出就会被裁掉一半、不好抓。 */
+.frame { overflow: visible; }
 .frame.dragging { border-color: var(--accent); }
+/* 线条家族选中时：去掉那圈包围盒边框（拖端点才是它的操作，矩形框没意义还挡视线）。
+   端点 / 拐点手柄是 .frame 的子元素，边框透明不影响它们显示与定位。 */
+.frame.box-line { border-color: transparent; box-shadow: none; }
 
 .ov-label {
   position: absolute; left: 0; bottom: 100%; margin-bottom: 5px;
@@ -665,34 +681,54 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 .handle.h-rot::before { width: 30px; height: 30px; margin: -15px 0 0 -15px; }
 .handle.h-rot:hover { box-shadow: 0 0 0 3px rgb(91 141 239 / .22); }
 
+/* 端点 / 拐点手柄：只对一维线条 / 曲线族显示。
+   蓝色实心小圆点 + 白边，比 8 向手柄更显眼：「这是端点不是角点」。 */
+.handle.h-ep { display: none; position: absolute; width: 14px; height: 14px;
+               border-radius: 50%; background: var(--blue);
+               border: 2px solid #fff;
+               box-shadow: 0 1px 3px rgb(0 0 0 / .25);
+               transform: translate(-50%, -50%) scale(var(--wd-inv-zoom, 1)); }
+.handle.h-ep-start { cursor: move; }
+.handle.h-ep-end   { cursor: move; }
+.handle.h-ep-bend  { background: #f7a600; cursor: move; }
+.handle.h-ep::before { content: ""; position: absolute; inset: -10px; }
+/* 端点手柄有数据时由 JS 打开 display */
+.handle.h-ep.shown { display: block; }
+.handle.h-ep.shown::before { width: 34px; height: 34px; margin: -10px; }
+
+/* 切线手柄：仅曲线族（三次贝塞尔）选中时显示。
+   做成「空心方点」与实心圆锚点区分 —— 锚点定大小，切线控弯曲。 */
+.handle.h-ep-c1, .handle.h-ep-c2 { width: 11px; height: 11px; border-radius: 3px;
+               background: #fff; border: 2px solid var(--blue); cursor: move; }
+
+/* 切线指引线：锚点 ↔ 切线手柄之间那条细虚线。
+   跟随 .stage 缩放，故用 non-scaling-stroke 保持 1.5 屏幕像素恒定；
+   纯提示，绝不参与命中（pointer-events:none）。 */
+.tangent-guide { position: absolute; left: 0; top: 0; overflow: visible;
+                 pointer-events: none; display: none; }
+.tangent-spoke { stroke: var(--blue); stroke-width: 1.5; stroke-dasharray: 4 3;
+                 opacity: .72; vector-effect: non-scaling-stroke; }
+
+/* 多边形顶点手柄：闭合后逐点可拖，改形状 / 大小。
+   容器 pointer-events:none，靠手柄自身 auto 命中（拖拽走帧框事件委托）。 */
+.vtx-layer { position: absolute; inset: 0; pointer-events: none; }
+.handle.h-vtx { display: none; position: absolute; width: 12px; height: 12px;
+                border-radius: 50%; background: var(--blue); border: 2px solid #fff;
+                box-shadow: 0 1px 3px rgb(0 0 0 / .25);
+                transform: translate(-50%, -50%) scale(var(--wd-inv-zoom, 1));
+                cursor: move; pointer-events: auto; }
+.handle.h-vtx.shown { display: block; }
+.handle.h-vtx::before { content: ""; position: absolute; inset: -10px; }
+
 .marquee {
   position: absolute; border: 1px solid var(--blue);
   background: rgb(91 141 239 / .13); pointer-events: none;
 }
 
-.ov-toolbar {
-  position: absolute; display: flex; gap: 2px;
-  padding: 4px; border-radius: 9px;
-  background: var(--surface); border: 1px solid var(--line);
-  box-shadow: var(--shadow-2);
-  /* 和 .handle 同一个道理：它在被 transform:scale() 缩放的 .stage 内，
-     不抵消的话画布缩到 55% 时 30px 的按钮只剩 16px，按钮和图标一起糊掉。
-     counter-scale 之后它在屏幕上永远是恒定尺寸，和缩放无关。 */
-  transform: scale(var(--wd-inv-zoom, 1));
-  transform-origin: center center;
-}
-.ov-toolbar button {
-  width: 30px; height: 30px; border: 0; background: transparent;
-  border-radius: 6px; cursor: pointer; color: var(--ink-2);
-  display: grid; place-items: center;
-}
-.ov-toolbar button .ic {
-  width: 17px; height: 17px;
-  fill: none; stroke: currentColor; stroke-width: 1.4;
-  stroke-linecap: round; stroke-linejoin: round;
-}
-.ov-toolbar button:hover { background: var(--chrome-2); color: var(--ink); }
-.ov-toolbar button[data-tb="del"]:hover { background: rgb(201 48 44 / .1); color: var(--danger); }
+/* 选中元素后曾经浮在画布上的那条 5 键工具条（编辑文字 / 复制 / 置顶 / 置底 / 删除）
+   已整条删除：它压在元素上方，盖住要读的内容；5 个键又全有等价路径
+   （编辑文字=双击、复制=Ctrl+D、置顶/置底=第二行与图层段、删除=Delete 键）。
+   选择框与手柄留着 —— 它们是纯提示，不吃点击。 */
 
 /* ── 舞台空状态 ── */
 .stage-empty {
@@ -771,6 +807,7 @@ html[data-theme="dark"] .btn.primary { color: #10141a; }
 .field-row { display: flex; flex-direction: column; gap: 5px; }
 .field-row.col { gap: 6px; }
 .field-label { font-size: 11px; color: var(--muted); font-weight: 500; }
+.field-tip { margin: 4px 0 0; font-size: 11px; color: var(--faint); line-height: 1.6; }
 
 .input {
   width: 100%; height: 29px; padding: 0 8px;
@@ -832,7 +869,11 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
 
 /* ── 快捷色板 ── */
 .swatches {
-  display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px;
+  /* 9 列写死的话，格子宽度是「容器宽度 ÷ 9」算出来的 ——
+     右栏让开收起拉手（内边距 12→30）之后每格从 24px 掉到 22px，
+     正好跌破命中区下限。改成 minmax(24px,1fr)：
+     列数由可用宽度自适应，但**每格永远不小于 24px**。 */
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(24px, 1fr)); gap: 4px;
   padding: 7px; border-radius: 8px;
   background: var(--chrome-2); border: 1px solid var(--line);
 }
@@ -842,6 +883,14 @@ html[data-theme="dark"] .seg-btn:hover { background: rgb(255 255 255 / .07); }
   cursor: pointer; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .swatch:hover { transform: scale(1.18); box-shadow: 0 2px 7px rgb(20 30 45 / .3); z-index: 2; }
+/* 色板末尾的「+」：开原生色盘取任意色。做成虚线描边 + 加号，
+   跟实心色块区分开 —— 它不是一种颜色，是一个动作。 */
+.swatch-pick {
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border-style: dashed; border-color: rgb(20 30 45 / .35);
+  color: var(--muted); font-size: 13px; font-weight: 700; line-height: 1;
+}
+.swatch-pick:hover { color: var(--blue); border-color: var(--blue); }
 
 /* ── 高级 ── */
 .adv { margin-top: 4px; border-top: 1px dashed var(--line); padding-top: 10px; }
@@ -1274,15 +1323,103 @@ body.dragging-file::after {
 .tb-menu#menu-formula { min-width: 186px; }
 .tb-menu#menu-chart { min-width: 158px; }
 
-/* ── 线条元素 ────────────────────────────────────────────────────────
+/* ── 线条与曲线形状 ──────────────────────────────────────────────────
    边框盒子本身透明，笔画是 WD.elements.syncLine() 画出来的 <svg>：
-   箭头头部是**固定像素**，只有杆随长度拉伸 —— 用 clip-path 的百分比
-   会把箭头头部跟着宽度一起拉长，长箭头就会变成一个大三角。 */
+     · 直线 / 箭头 / 双箭头是**填充**图形：箭头头部固定像素，只有杆随长度拉伸
+       （用 clip-path 的百分比会把箭头头一起拉长，长箭头变成一个大三角）；
+     · 曲线 / 连接线 / 曲线连接线 / 自由绘制 / 多边形是**描边**图形：
+       fill 透明、颜色走 stroke、线宽走 stroke-width。
+   两类都把 svg 铺满元素盒子，viewBox 与盒子同步（syncLine 每次重设），
+   所以描边宽度不会被缩放拉粗。 */
 [data-wd-added="arrow"] > svg,
 [data-wd-added="dblarrow"] > svg,
-[data-wd-added="line"] > svg {
+[data-wd-added="line"] > svg,
+[data-wd-added="curve"] > svg,
+[data-wd-added="connector"] > svg,
+[data-wd-added="connectorcurve"] > svg,
+[data-wd-added="drawn"] > svg,
+[data-wd-added="poly"] > svg {
   position: absolute; left: 0; top: 0;
   pointer-events: none; overflow: visible;
+}
+
+/* ── 绘制态预览（自由绘制 / 多边形） ─────────────────────────────────
+   挂在父页的 .overlay 里，用画布坐标系，跟着 .stage 一起缩放。
+   .overlay > * 默认 pointer-events:auto，这里必须关掉，
+   否则这一整块预览层会把画布上的指针事件全吃掉（同一坑见 .guides 的注释）。 */
+.wd-draw-preview { position: absolute; left: 0; top: 0; pointer-events: none; }
+.wd-draw-path {
+  fill: none; stroke: var(--blue); stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round; opacity: .95;
+}
+/* 橡皮筋：多边形「最后一个顶点 → 指针」的在途边，marching-dash 让它在动 */
+.wd-draw-band {
+  fill: none; stroke: var(--blue); stroke-width: 2; opacity: .8;
+  stroke-linecap: round; stroke-dasharray: 7 6;
+  animation: wd-band-march .6s linear infinite;
+}
+.wd-draw-band.closing { stroke: var(--accent); opacity: 1; stroke-width: 2.4; }
+.wd-draw-dot { fill: var(--surface); stroke: var(--blue); stroke-width: 2; }
+.wd-draw-dot.first { fill: var(--blue); stroke: var(--surface); }
+/* 指针逼近起点：起点鼓成描边强调色，明确「点这里就闭合」 */
+.wd-draw-dot.first.near { fill: var(--accent); stroke: var(--surface); stroke-width: 3; }
+/* 最新落点 pop 一下，配合描边动画给出「这条边刚画出来」的反馈 */
+.wd-draw-dot.pop { transform-box: fill-box; transform-origin: center; animation: wd-dot-pop .22s var(--ease); }
+@keyframes wd-band-march { to { stroke-dashoffset: -26; } }
+@keyframes wd-dot-pop { from { transform: scale(.2); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .wd-draw-band { animation: none; }
+  .wd-draw-dot.pop { animation: none; }
+}
+
+/* ── 分区折叠 ────────────────────────────────────────────────────────
+   照 Bento 的做法：标题一行文字 + 左侧小三角，点标题开合。
+   标题是 <button>（键盘可达），沿用 .sec-title 的排版，所以这里只补
+   「按钮化」需要的重置与三角指示；内容裹在 .sec-body 里整段收起。
+
+   与 .insp-sec[hidden] 的分工：那个是业务显隐（选中图表才有图表数据），
+   这个是用户开合。两者互不覆盖，所以 .sec-body[hidden] 必须加上，
+   否则它里面的 .field-row 之类自带 display 的子元素会把 hidden 顶回来。 */
+.sec-head {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  /* min-height 24 + 纵向 padding：命中区不小于 24×24 是全应用的硬指标
+     （topbar-test 会逐个按钮量），纯文字标题的自然高度只有 17px，不达标。
+     用 min-height + align-items 居中而不是只加 padding：
+     这样文字与左侧三角都仍然落在盒子正中，观感与只有文字时一致。 */
+  min-height: 24px; padding: 3px 0;
+  border: 0; background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  position: relative; padding-left: 13px;
+  /* 过渡时长必须与全应用一致（--dur）。按钮 reset 里把 transition 清成了 none，
+     不显式写回来的话，这个新按钮会成为全站唯一一个「点下去没有过渡」的控件。 */
+  transition: color var(--dur) var(--ease);
+}
+.sec-head::before {
+  content: ""; position: absolute; left: 1px; top: 50%;
+  width: 0; height: 0; transform: translateY(-50%) rotate(90deg);
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  opacity: .45; transition: transform .12s var(--ease);
+}
+.sec-head[aria-expanded="false"]::before { transform: translateY(-50%); }
+.sec-head:hover { color: var(--ink); }
+.sec-head:focus-visible { outline: none; }
+.sec-head:focus-visible::before { opacity: .9; }
+.sec-body { display: flex; flex-direction: column; gap: 10px; }
+.sec-body[hidden] { display: none !important; }
+
+/* 图表配色：一排小色块。选中那个用描边 + 对勾表示，
+   不用「变大 / 加阴影」这种会改变行高的反馈（整排会跳）。 */
+.sw-pal {
+  width: 22px; height: 22px; padding: 0; flex: none;
+  border: 2px solid var(--line-2); border-radius: 6px; cursor: pointer;
+  position: relative;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.sw-pal:hover { transform: translateY(-1px); }
+.sw-pal.active {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--blue);
 }
 
 /* ── 弹窗表单（表格行列 / LaTeX 输入） ─────────────────────────────── */
@@ -1301,13 +1438,121 @@ body.dragging-file::after {
 .tex-preview math { font-size: 24px; }
 .tex-preview .muted { color: var(--faint); font-size: 12.5px; }
 
-/* ── 图表数据表编辑器 ────────────────────────────────────────────────── */
+/* ── 图表数据：右栏常驻段 ──────────────────────────────────────────────
+   数据录入是「系列」+「分类 × 系列网格」两块，不是「一个输入框塞一串逗号值」：
+   后者改第 3 个数得先进输入框数逗号，也看不出哪一格属于哪个系列。 */
 .chart-row { display: flex; gap: 8px; margin-bottom: 6px; }
-.chart-row .input:first-child { flex: none; width: 150px; }
-.chart-row .input:last-child { flex: 1; }
+
+/* 系列行：[名称 1fr] [类型 auto] [颜色 24] [删除 20]。
+   类型下拉给 76px —— 中文只有「柱状 / 折线」两个选项，再宽就是浪费。 */
+#chf-series .series-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px 24px 20px;
+  align-items: center; gap: 6px; margin-bottom: 6px;
+}
+#chf-series .series-row .input { width: 100%; min-width: 0; }
+#chf-series .series-row .series-type { width: 76px; }
+/* 饼图只有一个系列，那一行没有类型也没有删除，列数少一个类型列 */
+#chf-series .series-row.no-kind { grid-template-columns: minmax(0, 1fr) 24px 24px 20px; }
+
+/* 颜色格：点一下沿色板轮换。24×24 是命中区下限。 */
+.sw-series {
+  width: 24px; height: 24px; padding: 0; flex: none;
+  border: 1px solid rgb(20 30 45 / .18); border-radius: 6px; cursor: pointer;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.sw-series:hover { transform: translateY(-1px); box-shadow: 0 2px 7px rgb(20 30 45 / .25); }
+
+/* 每行背后的原生取色 input：平时**藏起来**（否则会在网格里多占一格、
+   显示成黑色小方块，还把删除键挤到第二行）。点色格时由 openColorPickerAt
+   把它临时定位到色格上再 .click()，所以这里脱离网格流、透明且不吃指针。 */
+#chf-series .series-row { position: relative; }
+#chf-series .sw-pick {
+  position: absolute;
+  top: 0; left: 0;
+  width: 1px; height: 1px;
+  opacity: 0; pointer-events: none;
+  border: 0; padding: 0; margin: 0;
+  appearance: none; -webkit-appearance: none;
+}
+
+/* 删除按钮（系列 / 分类行尾）：20×20 的图标键，命中区靠外圈补到 24 */
+.icon-btn.chart-del {
+  width: 20px; height: 20px; padding: 0; flex: none;
+  display: grid; place-items: center;
+  border: 0; border-radius: 5px; background: transparent;
+  color: var(--faint); font-size: 11px; line-height: 1; cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.icon-btn.chart-del:hover { background: #fdecea; color: #c0392b; }
+
+/* ── 数据网格：行 = 分类，列 = 系列 ──
+   列数由 JS 按系列数写成 gridTemplateColumns；系列一多就横向滚动
+   （外层 #chf-grid-wrap 负责 overflow），不要把右栏撑宽。 */
+#chf-grid-wrap { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.chart-grid {
+  display: grid; gap: 4px 5px; align-items: center;
+  min-width: max-content;
+}
+.chart-grid-corner { min-width: 0; }
+.chart-grid-head {
+  font-size: 10.5px; font-weight: 600; color: var(--muted);
+  text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 网格里的输入框要比常规 .input 矮一点：一屏要塞下 4~8 行 */
+.chart-grid .input {
+  height: 26px; padding: 0 6px; font-size: 12px; text-align: center;
+  min-width: 0; width: 100%;
+}
+.chart-grid .grid-key { text-align: left; }
+.chart-grid .grid-val { font-variant-numeric: tabular-nums; }
+.chart-grid .input::-webkit-outer-spin-button,
+.chart-grid .input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
 .chart-opts { gap: 18px; margin-top: 12px; }
+
+/* ── 图表背景色 ──
+   第一格是「无」（透明，画斜线示意），中间是常用底色，最后一格是自定义取色。
+   这些格子不在 .swatches 里（那是 auto-fill 的网格，会把「无」也撑成一格色块），
+   单独给一条横向 flex。 */
+#chf-bg { display: flex; flex-wrap: wrap; gap: 4px; }
+#chf-bg .sw {
+  width: 24px; height: 24px; padding: 0; flex: none;
+  border: 1px solid rgb(20 30 45 / .18); border-radius: 6px; cursor: pointer;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+#chf-bg .sw:hover { transform: translateY(-1px); }
+#chf-bg .sw.active {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--blue);
+}
+/* 「无」用斜线表示透明（与「一个白块」区分开） */
+#chf-bg .sw-none {
+  background: repeating-linear-gradient(45deg,
+    var(--surface) 0 3px, var(--line) 3px 6px);
+}
+/* 自定义那一格：没选过时是一圈虚线的空位，选过就填上那个色 */
+#chf-bg .sw-custom {
+  background: var(--surface);
+  border-style: dashed;
+  position: relative;
+}
+#chf-bg .sw-custom::after {
+  content: "+"; position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 12px; color: var(--muted); line-height: 1;
+}
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
 .chk input { width: 14px; height: 14px; cursor: pointer; }
+/* 双击图表时闪一下，告诉用户「数据在这一段」，免得点了没反应 */
+#sec-chart.flash { animation: chf-flash 1.1s var(--ease); }
+@keyframes chf-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  30% { box-shadow: 0 0 0 3px var(--accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #sec-chart.flash { animation: none; }
+}
 
 /* ── 表格工具条（检查器里，仅选中表格时出现） ─────────────────────── */
 .tbl-btns { display: flex; gap: 5px; flex-wrap: wrap; }
@@ -1369,8 +1614,7 @@ body.dragging-file::after {
    时长（0.13 / 0.18 / 0.16 / 0.1 …），点下去快慢不一。
    现在统一到 var(--dur)，审计里「过渡时长」一列应当只剩一种。 */
 .btn, .mini-btn, .input, .seg-btn, .layer-row,
-.tb-btn, .layer-btn, .swatch, .panel-collapse, .edge-tab, .hud-btn,
-.ov-toolbar button {
+.tb-btn, .layer-btn, .swatch, .panel-collapse, .edge-tab, .hud-btn {
   transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
               color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
               opacity var(--dur) var(--ease), transform var(--dur-press) var(--ease);
@@ -1468,33 +1712,6 @@ body.dragging-file::after {
     <path d="M8.4 11.4v.05"/>
   </symbol>
 
-  <!-- ══ 选中后的浮动工具条图标（与顶栏同一套描边参数） ══
-       这组原先用的是 Unicode 符号 ✎ ⧉ ⇧ ⇩ ✕。12.5px 下它们又细又小，
-       尤其 ⇧ ⇩ 两个箭头几乎只剩两笔，看不出是什么，
-       所以和顶栏一起换成内联线性 SVG。 -->
-  <symbol id="ic-edit-text" viewBox="0 0 16 16">
-    <path d="M10.6 2.9l2.5 2.5-6.6 6.6-2.9.5.5-2.9z"/>
-    <path d="M9.4 4.1l2.5 2.5"/>
-    <path d="M3.4 13.7h9.2"/>
-  </symbol>
-  <symbol id="ic-dup" viewBox="0 0 16 16">
-    <rect x="1.9" y="1.9" width="8.2" height="8.2" rx="1.3"/>
-    <path d="M5.9 13.9h6.8a1.4 1.4 0 001.4-1.4V5.7"/>
-  </symbol>
-  <symbol id="ic-front" viewBox="0 0 16 16">
-    <path d="M2.6 3.1h10.8"/>
-    <path d="M8 13.4V6.6"/>
-    <path d="M5.1 9.5L8 6.5l2.9 3"/>
-  </symbol>
-  <symbol id="ic-back" viewBox="0 0 16 16">
-    <path d="M2.6 12.9h10.8"/>
-    <path d="M8 2.6v6.8"/>
-    <path d="M5.1 6.5L8 9.5l2.9-3"/>
-  </symbol>
-  <symbol id="ic-del" viewBox="0 0 16 16">
-    <path d="M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>
-  </symbol>
-
   <!-- ══ 插入组的三个新图标 ══ -->
   <symbol id="ic-table" viewBox="0 0 16 16">
     <rect x="1.9" y="2.9" width="12.2" height="10.2" rx="1.2"/>
@@ -1578,6 +1795,10 @@ body.dragging-file::after {
     <span class="file-chip" id="file-chip"></span>
 
     <span class="tb-sep"></span>
+
+    <button class="tb-btn" id="btn-open" title="打开 HTML 文件 (Ctrl+O)">
+      <svg class="ic" aria-hidden="true"><use href="#ic-open"/></svg><span>打开</span>
+    </button>
 
     <!-- 保存与导出合并成一个按钮，点击后向下展开三个功能。 -->
     <div class="tb-group insert-group" id="save-group">
@@ -1751,15 +1972,24 @@ body.dragging-file::after {
               <div class="handle h-sw" data-h="sw"></div>
               <div class="handle h-w"  data-h="w"></div>
               <div class="handle h-rot" data-h="rot" title="旋转">⟳</div>
+              <!-- 端点手柄：直线 / 箭头 / 曲线 / 连接线选中时显示。
+                   拖动改元素的两个端点；曲线还可以拖中间那个拐点（h-bend）。 -->
+              <div class="handle h-ep h-ep-start" data-h="ep-start" title="起点"></div>
+              <div class="handle h-ep h-ep-end"   data-h="ep-end"   title="终点"></div>
+              <div class="handle h-ep h-ep-bend"  data-h="ep-bend"  title="拐点（连接线肘）"></div>
+              <!-- 切线手柄：仅曲线族（曲线 / 曲线连接线）选中时显示。
+                   拖它 = 改该端贝塞尔切线的方向与长度（弯曲程度）。 -->
+              <div class="handle h-ep h-ep-c1"    data-h="ep-c1"    title="起点切线（控制弯曲）"></div>
+              <div class="handle h-ep h-ep-c2"    data-h="ep-c2"    title="终点切线（控制弯曲）"></div>
+              <!-- 切线指引线：连接锚点↔切线手柄的小线段（仅曲线族绘制）。 -->
+              <svg class="tangent-guide" aria-hidden="true">
+                <line class="tangent-spoke t-spoke-1"></line>
+                <line class="tangent-spoke t-spoke-2"></line>
+              </svg>
+              <!-- 多边形顶点手柄容器：选中多边形时按顶点数动态填充。 -->
+              <div class="vtx-layer"></div>
             </div>
             <div class="marquee" id="marquee" hidden></div>
-            <div class="ov-toolbar" id="ov-toolbar" hidden>
-              <button data-tb="edit-text" title="编辑文字（双击进入）"><svg class="ic" aria-hidden="true"><use href="#ic-edit-text"/></svg></button>
-              <button data-tb="dup" title="复制元素"><svg class="ic" aria-hidden="true"><use href="#ic-dup"/></svg></button>
-              <button data-tb="front" title="置于顶层"><svg class="ic" aria-hidden="true"><use href="#ic-front"/></svg></button>
-              <button data-tb="back" title="置于底层"><svg class="ic" aria-hidden="true"><use href="#ic-back"/></svg></button>
-              <button data-tb="del" title="删除元素"><svg class="ic" aria-hidden="true"><use href="#ic-del"/></svg></button>
-            </div>
           </div>
         </div>
       </div>
@@ -1836,6 +2066,59 @@ body.dragging-file::after {
             <button class="btn tiny" id="btn-slide-del">删除页</button>
             <button class="btn tiny" id="btn-slide-up">上移</button>
             <button class="btn tiny" id="btn-slide-down">下移</button>
+          </div>
+        </section>
+
+        <!-- ── 图表数据 ──
+             原来改图表数据要双击图表弹一个居中模态框：画布被盖住、
+             改完要点「应用」才知道成没成、错了还得整个重来。
+             现在这段常驻右栏，改一下就重画（停手 0.4 秒自动生效）。
+             选中的不是图表时整段隐藏，右栏不会凭空多出一堆无关控件。
+
+             数据录入是**表格**而不是「一个输入框塞一串逗号值」：
+             前者对齐、可点、一眼能看出哪一格是哪个系列的哪一项，
+             后者改第 3 个数得先进输入框数逗号。 -->
+        <section class="insp-sec" id="sec-chart" hidden>
+          <div class="sec-title">
+            图表数据
+            <span class="sec-hint">改完自动生效</span>
+          </div>
+          <div class="sec-body">
+
+          <div class="field-row">
+            <label class="field-label">图表标题</label>
+            <input class="input" id="chf-title" placeholder="留空则不画标题">
+          </div>
+
+          <div class="row-inline wrap gap chart-opts chart-opts-top">
+            <label class="chk"><input type="checkbox" id="chf-legend"> 显示图例</label>
+            <label class="chk"><input type="checkbox" id="chf-values"> 显示数值</label>
+            <button class="btn tiny" id="chf-reset" type="button">恢复示例数据</button>
+          </div>
+
+          <div class="field-row col">
+            <label class="field-label">系列</label>
+            <div id="chf-series"></div>
+            <button class="btn tiny" id="chf-add-series" type="button">＋ 添加系列</button>
+          </div>
+
+          <div class="field-row col">
+            <label class="field-label">数据</label>
+            <div id="chf-grid-wrap">
+              <div class="chart-grid" id="chf-grid"></div>
+            </div>
+            <button class="btn tiny" id="chf-add-cat" type="button">＋ 添加分类</button>
+          </div>
+
+          <div class="field-row">
+            <label class="field-label">背景色</label>
+            <div class="swatches" id="chf-bg"></div>
+          </div>
+
+          <div class="row-inline wrap gap">
+            <input type="color" id="chf-custom-color" title="自定义系列颜色" hidden>
+          </div>
+
           </div>
         </section>
 
@@ -1923,6 +2206,19 @@ body.dragging-file::after {
               <span class="adv-hint">每行一条，仅作用于当前元素</span>
             </div>
           </details>
+
+          <!-- ── 公式专属：选中公式时多出这一段 ──
+               公式的「内容」是 LaTeX 源（data-wd-latex），不是 DOM textContent，
+               右栏给一个 LaTeX 输入框 + 编辑按钮，改完即时重画。 -->
+          <div class="field-row" id="f-formula-row" hidden>
+            <label class="field-label">LaTeX 源</label>
+            <input class="input mono" id="f-formula-src" spellcheck="false"
+                   placeholder="例如 \\frac{a}{b} + \\sqrt{x}">
+            <div class="row-inline gap" style="margin-top:6px">
+              <button class="btn tiny" id="f-formula-edit" type="button">在弹窗中编辑</button>
+              <button class="btn tiny" id="f-formula-reset" type="button">重置缩放</button>
+            </div>
+          </div>
         </section>
 
         <!-- ── 空状态 ── -->
@@ -1972,6 +2268,9 @@ body.dragging-file::after {
 <input type="file" id="file-input" accept=".html,.htm,.wd.html" hidden>
 <input type="file" id="image-input" accept="image/*" hidden>
 <input type="file" id="video-input" accept="video/*" hidden>
+<!-- 图表「自定义背景色」的取色器：走原生 <input type="color">，
+     比自绘取色面板省一整套交互，也不占右栏空间。 -->
+<input type="color" id="chart-bg-input" hidden>
 
 <!-- ══ 右键菜单 ══ -->
 <div class="ctxmenu" id="ctxmenu" hidden></div>
@@ -2359,9 +2658,34 @@ body.dragging-file::after {
     return s;
   }
 
+  /* WizDeck 自己插入的元素：报它在应用里的名字，而不是 div / img。
+     否则检查器顶部与状态栏会把「自由绘制」显示成「容器」、
+     把「折线图」显示成「图片」—— 用户根本对不上自己刚插的是什么。 */
+  var ADDED_NAMES = {
+    drawn: '自由绘制', poly: '多边形',
+    curve: '曲线', connector: '连接线', connectorcurve: '曲线连接线',
+    line: '直线', arrow: '箭头', dblarrow: '双向箭头',
+    rect: '矩形', round: '圆角矩形', circle: '圆形', oval: '椭圆',
+    triangle: '三角形', para: '平行四边形',
+    table: '表格', formula: '公式',
+    bar: '柱状图', chartline: '折线图', pie: '饼状图',
+    text: '文本框', textv: '竖向文本框',
+    title1: '一级标题', title2: '二级标题', title3: '三级标题', title4: '四级标题',
+  };
+
   function describeElement(node) {
     if (!isElement(node)) return '';
     var tag = node.tagName.toLowerCase();
+    /* 自插元素优先。图表是 <img data-wd-added="chart-line">，所以再看一眼图表类型 */
+    var added = node.getAttribute ? node.getAttribute('data-wd-added') : null;
+    if (added) {
+      if (ADDED_NAMES[added]) return ADDED_NAMES[added];
+      var ck = node.getAttribute('data-wd-chart-kind');
+      if (ck) return ({ bar: '柱状图', chartline: '折线图', pie: '饼状图' })[ck] || '图表';
+      if (/^chart-/.test(added)) return '图表';
+      if (added === 'image') return '图片';
+      if (added === 'video') return '视频';
+    }
     var FRIENDLY = {
       h1: '大标题', h2: '标题', h3: '小标题', h4: '小标题', h5: '小标题', h6: '小标题',
       p: '段落', div: '容器', span: '文本', section: '区块', article: '区块',
@@ -3119,7 +3443,10 @@ body.dragging-file::after {
   var PROJECT_OPEN = '<script type="application/wizdeck+json" id="wizdeck-doc">';
   var PROJECT_CLOSE = '<\/script>';
 
-  function serializeProject(model) {
+  /* 工程 JSON 区块 —— 全工程只有这一处生成它。
+     type 不是 javascript，浏览器当数据块不执行；WizDeck 靠它无损还原全部页面。
+     「保存」与「导出为 HTML」共用这一块，避免同一份课件在文件里存两遍。 */
+  function projectJson(model) {
     var payload = {
       format: 'wizdeck',
       version: 1,
@@ -3134,7 +3461,10 @@ body.dragging-file::after {
       })
     };
     /* JSON 里的 "<" 全部转义，避免提前闭合 script 标签 */
-    var json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    return PROJECT_OPEN + JSON.stringify(payload).replace(/</g, '\\u003c') + PROJECT_CLOSE;
+  }
+
+  function serializeProject(model) {
     return '<!--\n  WizDeck 工程文件 / WizDeck project file\n' +
       '  用「智演引擎 WizDeck」打开即可继续编辑，也可以直接当普通 HTML 预览。\n' +
       '  下面 id="wizdeck-doc" 的区块内是可读 JSON（所有 "<" 已转义为 \\u003c）。\n-->\n' +
@@ -3143,7 +3473,7 @@ body.dragging-file::after {
       '<title>' + U.escapeHtml(model.title || 'WizDeck 工程') + '</title>\n' +
       '</head>\n<body>\n' +
       '<div id="wizdeck-runner" data-wd-skip></div>\n' +
-      PROJECT_OPEN + json + PROJECT_CLOSE + '\n' +
+      projectJson(model) + '\n' +
       '<script data-wd-skip>\n' +
       '/* 直接用浏览器打开时的简易翻页预览；在 WizDeck 里打开则进入完整编辑。 */\n' +
       '(function(){var d=document.getElementById("wizdeck-doc");if(!d)return;' +
@@ -3157,6 +3487,30 @@ body.dragging-file::after {
       'r.addEventListener("click",function(){go(i+1)});go(0);})();\n' +
       '<\/script>\n' +
       '</body>\n</html>\n';
+  }
+
+  /* 兼容层：早期「导出为 HTML」的放映页把全部页只存在脚本里的 var PAGES=[...] 数组中，
+     没有 wizdeck-doc 工程区块。这种文件直接走 loadHtml 只能量到 1 页（body 里就一个
+     iframe + 翻页条），所以先把那段数组抠出来，还原成完整多页deck。
+     数组元素是 JSON.stringify 后再把 < 转成 \u003c 的字面量，JSON.parse 能直接吃。 */
+  function parseLegacyViewer(text) {
+    var m = String(text || '').match(/var\s+PAGES\s*=\s*(\[[\s\S]*?\])\s*;\s*\n?\s*var\s+W\s*=/);
+    if (!m) return null;
+    var arr;
+    try { arr = JSON.parse(m[1]); } catch (e) { return null; }
+    if (!Array.isArray(arr) || arr.length < 2) return null;
+    var tm = String(text).match(/<title>([\s\S]*?)<\/title>/i);
+    return {
+      title: (tm && tm[1] ? tm[1].replace(/&amp;/g, '&').trim() : '') || '未命名演示',
+      style: '',
+      slides: arr.map(function (doc, i) {
+        var d = typeof doc === 'string' ? doc : '';
+        return {
+          id: U.uid('slide'), name: '第 ' + (i + 1) + ' 页', title: '第 ' + (i + 1) + ' 页',
+          layout: i === 0 ? 'title' : 'content', notes: '', doc: d
+        };
+      })
+    };
   }
 
   function parseProject(text) {
@@ -3225,7 +3579,9 @@ body.dragging-file::after {
     applyAssetMap: applyAssetMap,
     fetchAsDataUrl: fetchAsDataUrl,
     serializeProject: serializeProject,
+    projectJson: projectJson,
     parseProject: parseProject,
+    parseLegacyViewer: parseLegacyViewer,
     looksLikeProject: looksLikeProject,
     guessSlideTitle: guessSlideTitle,
     STAGE_BASE_CSS: STAGE_BASE_CSS
@@ -3669,7 +4025,13 @@ body.dragging-file::after {
     var jobs = [];
 
     try {
-      if (doc.fonts && doc.fonts.ready) jobs.push(doc.fonts.ready.catch(function () {}));
+      if (doc.fonts && doc.fonts.ready) {
+        /* 字体加载可能永远不 settle（离线、被拦截），必须限时，否则会拖垮整个导出 */
+        jobs.push(Promise.race([
+          doc.fonts.ready.catch(function () {}),
+          new Promise(function (res) { setTimeout(res, opts.fontTimeout || 4000); })
+        ]));
+      }
     } catch (e) { /* ignore */ }
 
     var imgs = Array.prototype.slice.call(doc.images || []);
@@ -3683,7 +4045,12 @@ body.dragging-file::after {
     });
 
     if (opts.extraDelay) jobs.push(new Promise(function (res) { setTimeout(res, opts.extraDelay); }));
-    jobs.push(new Promise(function (res) { U.raf(function () { U.raf(res); }); }));
+    /* rAF 在后台标签页里压根不触发（浏览器会冻结渲染帧），
+       没有兜底的话离屏帧永远「没稳定」，最终只会等到 mountFrame 的超时。 */
+    jobs.push(new Promise(function (res) {
+      var t = setTimeout(res, 500);
+      U.raf(function () { U.raf(function () { clearTimeout(t); res(); }); });
+    }));
     return Promise.all(jobs);
   }
 
@@ -4589,9 +4956,12 @@ body.dragging-file::after {
       if (/url\(/i.test(bgImg)) {
         var layers = splitTopLevel(bgImg, ',');
         if (layers.length > 1) reasons.push('multi-bg');
-        if (/cover|contain/i.test(cs.backgroundSize || '') || U.parsePx(cs.borderTopLeftRadius, 0) > 0) {
-          reasons.push('bg-fit');
-        }
+        /* 平铺与圆角裁切没法用「一张图片形状」还原，交给贴图。
+           其余情况（含 cover / contain / 定位偏移）走矢量图片 + srcRect 裁切：
+           既保住清晰度，也不会把元素里的文字一起烘成位图。 */
+        var rep = (cs.backgroundRepeat || '').toLowerCase();
+        if (rep && rep !== 'no-repeat') reasons.push('bg-repeat');
+        if (U.parsePx(cs.borderTopLeftRadius, 0) > 0) reasons.push('bg-radius');
       }
     }
     if (cs.filter && cs.filter !== 'none') reasons.push('filter');
@@ -4713,6 +5083,22 @@ body.dragging-file::after {
       }
       for (var i = 0; i < node.children.length; i++) visit(node.children[i]);
     }
+
+    /* 根节点自己也要收进来：整页的背景图 / 渐变 / 底色常常就挂在 [data-wd-root] 或 body 上，
+       只遍历 children 会让它凭空消失。标记 bgOnly，表示「只画它自己的背景，
+       子元素照旧逐个矢量化」—— 绝不能把根节点当复杂元素整页栅格化，否则全篇文字变成一张图。 */
+    (function () {
+      var rcs;
+      try { rcs = win.getComputedStyle(root); } catch (e) { return; }
+      if (!rcs || rcs.display === 'none' || rcs.visibility === 'hidden') return;
+      var rbgImg = rcs.backgroundImage && rcs.backgroundImage !== 'none';
+      var rbgColor = U.isVisibleColor(U.parseColor(rcs.backgroundColor));
+      if (!rbgImg && !rbgColor) return;
+      out.unshift({
+        node: root, cs: rcs, box: { x: 0, y: 0, w: W, h: H }, tag: root.tagName.toLowerCase(),
+        reasons: [], bgImage: rbgImg, bgColor: rbgColor, border: { any: false }, bgOnly: true
+      });
+    })();
 
     for (var k = 0; k < root.children.length; k++) visit(root.children[k]);
     return out;
@@ -4913,6 +5299,138 @@ body.dragging-file::after {
       '</p:spPr></p:pic>';
   }
 
+  /* ── CSS 背景图 → PPTX 图片形状 ───────────────────────────────────────
+     CSS 那边有 background-size / -position / -origin / -clip 四个自由度，
+     PPTX 这边只有「外框矩形 + srcRect 源裁切」。所以要先算出浏览器真正把图片
+     画在了哪块矩形上，再把落在可见区之外的部分换算成裁切比例。
+     过去这类背景图只在 cover/contain 时被整块栅格化，其余情况直接消失。 */
+
+  function bgDataUrl(cs) {
+    var bi = cs && cs.backgroundImage;
+    if (!bi || bi === 'none' || !/url\(/i.test(bi)) return '';
+    if (splitTopLevel(bi, ',').length > 1) return '';   /* 多层背景交给贴图 */
+    var m = /url\(\s*(['"]?)([^'")]*)\1\s*\)/.exec(bi);
+    var u = m ? m[2] : '';
+    return /^data:/i.test(u) ? u : '';
+  }
+
+  function boxInsetBy(cs, box, which) {
+    var b = { x: box.x, y: box.y, w: box.w, h: box.h };
+    var props = which === 'content'
+      ? [['borderLeftWidth', 'paddingLeft'], ['borderTopWidth', 'paddingTop'],
+         ['borderRightWidth', 'paddingRight'], ['borderBottomWidth', 'paddingBottom']]
+      : [['borderLeftWidth'], ['borderTopWidth'], ['borderRightWidth'], ['borderBottomWidth']];
+    var l = 0, t = 0, r = 0, bt = 0;
+    props.forEach(function (p, i) {
+      var v = 0;
+      p.forEach(function (k) { v += U.parsePx(cs[k], 0) || 0; });
+      if (i === 0) l = v; else if (i === 1) t = v; else if (i === 2) r = v; else bt = v;
+    });
+    b.x += l; b.y += t;
+    b.w = Math.max(0, b.w - l - r);
+    b.h = Math.max(0, b.h - t - bt);
+    return b;
+  }
+
+  function bgKeyword(v, isStart) {
+    switch (String(v || '').toLowerCase()) {
+      case 'left': case 'top': return '0%';
+      case 'right': case 'bottom': return '100%';
+      case 'center': return '50%';
+      default: return v || (isStart ? '0%' : '50%');
+    }
+  }
+
+  function bgDrawnSize(cs, ref, natW, natH) {
+    var bs = String(cs.backgroundSize || 'auto').trim().toLowerCase();
+    if (!bs || bs === 'auto') return { w: natW, h: natH };
+    if (/^cover/.test(bs)) {
+      var s = Math.max(ref.w / natW, ref.h / natH);
+      return { w: natW * s, h: natH * s };
+    }
+    if (/^contain/.test(bs)) {
+      var s2 = Math.min(ref.w / natW, ref.h / natH);
+      return { w: natW * s2, h: natH * s2 };
+    }
+    function dim(v, base) {
+      if (!v || v === 'auto') return null;
+      if (/%$/.test(v)) { var f = parseFloat(v); return isNaN(f) ? null : base * f / 100; }
+      var px = U.parsePx(v, NaN);
+      return (px === null || isNaN(px)) ? null : px;
+    }
+    var parts = bs.split(/\s+/);
+    var w = dim(parts[0], ref.w);
+    var h = parts.length > 1 ? dim(parts[1], ref.h) : null;
+    if (w === null && h === null) return { w: natW, h: natH };
+    if (w === null) w = natW * h / natH;
+    if (h === null) h = natH * w / natW;
+    return { w: w, h: h };
+  }
+
+  function bgPlacement(cs, box, natW, natH) {
+    if (!natW || !natH || box.w < 0.5 || box.h < 0.5) return null;
+    var origin = (cs.backgroundOrigin || 'padding-box').toLowerCase();
+    var ref = origin === 'border-box' ? box
+      : boxInsetBy(cs, box, origin === 'content-box' ? 'content' : 'padding');
+    var clipProp = (cs.backgroundClip || 'border-box').toLowerCase();
+    var clip = clipProp === 'border-box' ? box
+      : boxInsetBy(cs, box, clipProp === 'content-box' ? 'content' : 'padding');
+    if (ref.w < 0.5 || ref.h < 0.5 || clip.w < 0.5 || clip.h < 0.5) return null;
+
+    var d = bgDrawnSize(cs, ref, natW, natH);
+    if (!(d.w > 0) || !(d.h > 0)) return null;
+
+    var bp = String(cs.backgroundPosition || '0% 0%').trim().split(/\s+/);
+    function off(v, base, drawn) {
+      if (/%$/.test(v)) { var f = parseFloat(v); return isNaN(f) ? 0 : (base - drawn) * f / 100; }
+      var px = U.parsePx(v, NaN);
+      return (px === null || isNaN(px)) ? 0 : px;
+    }
+    var ox = off(bgKeyword(bp[0], true), ref.w, d.w);
+    var oy = off(bgKeyword(bp[1], false), ref.h, d.h);
+
+    var x = ref.x + ox, y = ref.y + oy;
+    var ix = Math.max(x, clip.x), iy = Math.max(y, clip.y);
+    var ix2 = Math.min(x + d.w, clip.x + clip.w), iy2 = Math.min(y + d.h, clip.y + clip.h);
+    if (ix2 - ix < 0.5 || iy2 - iy < 0.5) return null;
+
+    function thou(v) { return Math.round(U.clamp(v, 0, 1) * 100000); }
+    return {
+      x: ix, y: iy, w: ix2 - ix, h: iy2 - iy,
+      src: {
+        l: thou((ix - x) / d.w), t: thou((iy - y) / d.h),
+        r: thou((x + d.w - ix2) / d.w), b: thou((y + d.h - iy2) / d.h)
+      }
+    };
+  }
+
+  function bgPictureXml(id, name, p, relId) {
+    var s = p.src;
+    return '<p:pic><p:nvPicPr><p:cNvPr id="' + id + '" name="' + U.escapeXml(name) + '"/>' +
+      '<p:cNvPicPr><a:picLocks/></p:cNvPicPr><p:nvPr/></p:nvPicPr>' +
+      '<p:blipFill><a:blip r:embed="' + relId + '"/>' +
+      '<a:srcRect l="' + s.l + '" t="' + s.t + '" r="' + s.r + '" b="' + s.b + '"/>' +
+      '<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>' +
+      xfrmXml(p.x, p.y, p.w, p.h) + prstGeom('rect') +
+      '</p:spPr></p:pic>';
+  }
+
+  /* 背景图裁切要用到图片原始尺寸，统一预取一次（同一张图只取一次） */
+  function prefetchBgSizes(items) {
+    var urls = [], seen = Object.create(null);
+    items.forEach(function (item) {
+      var u = bgDataUrl(item.cs);
+      if (u && !seen[u]) { seen[u] = true; urls.push(u); }
+    });
+    var out = Object.create(null);
+    if (!urls.length) return Promise.resolve(out);
+    return Promise.all(urls.map(function (u) {
+      return WD.render.prefetchImage(u).then(function (img) {
+        out[u] = { w: img.naturalWidth || img.width || 0, h: img.naturalHeight || img.height || 0 };
+      }, function () { out[u] = null; });
+    })).then(function () { return out; });
+  }
+
   /* 文本框：每行一个 <a:p>，位置和断行都按浏览器实测结果摆放。
      但 bodyPr 必须允许换行（wrap="square"），不能用 wrap="none"：
      演示电脑上若缺少设计字体，字体度量变化会让文字变宽，wrap="none" 会把整行推出画面，
@@ -5000,8 +5518,74 @@ body.dragging-file::after {
        ⑥ 剩下的纯色块 / 边框 / data-URI 图片 / 文字 → 真正的矢量对象。
      ══════════════════════════════════════════════════════════════════════ */
 
-  function buildSlide(slide, ctx, opts) {
+  /* 导出前把这一页里「还没变成 data: 的图片」补内联一遍，覆盖两类：
+       · <img> 的 src
+       · 任意元素的 background-image: url(...)（页面背景图就是走这条）
+       为什么必须做：PPTX 只能嵌字节，而且 foreignObject 栅格化压根加载不了外部资源。
+       导入 HTML 时若资源内联失败（外链、CORS、file://），不补这一步图片和背景图
+       会在导出产物里凭空消失 —— 而且过去是静默消失。 */
+  function inlineSlideImages(doc, note) {
+    var win = doc.defaultView;
+    var jobs = [];
+    Array.prototype.forEach.call(doc.querySelectorAll('img'), function (n) {
+      var src = n.currentSrc || n.src || n.getAttribute('src') || '';
+      if (src && !/^data:/i.test(src)) jobs.push({ url: src, kind: 'img', node: n });
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll('*'), function (n) {
+      var cs;
+      try { cs = win && win.getComputedStyle(n); } catch (e) { return; }
+      if (!cs) return;
+      var bi = cs.backgroundImage || '';
+      if (bi === 'none' || !/url\(/i.test(bi)) return;
+      var m = /url\(\s*(['"]?)([^'")]*)\1\s*\)/.exec(bi);
+      if (!m) return;
+      var u = m[2];
+      if (!u || /^data:/i.test(u)) return;
+      jobs.push({ url: u, kind: 'bg', node: n, full: m[0], bi: bi });
+    });
+    if (!jobs.length) return Promise.resolve();
+    var changed = [];
+    return Promise.all(jobs.map(function (j) {
+      return WD.parse.fetchAsDataUrl(j.url).then(function (d) {
+        if (!d || !/^data:/i.test(d)) return false;
+        /* 替换串用函数返回，避免 dataURL 里偶发的 $ 被当成 replace 的模式符 */
+        if (j.kind === 'img') { j.node.src = d; changed.push(j.node); }
+        else j.node.style.backgroundImage = j.bi.replace(j.full, function () { return 'url("' + d + '")'; });
+        return true;
+      }, function () { return false; });
+    })).then(function (oks) {
+      /* 逐条报出到底哪个资源没拿到：只说「有几处失败」用户没法排查 */
+      var bad = [];
+      oks.forEach(function (o, i) { if (!o) bad.push(jobs[i]); });
+      if (bad.length && typeof note === 'function') {
+        bad.slice(0, 5).forEach(function (j) {
+          note((j.kind === 'img' ? '图片' : '背景图') + '无法内联，导出产物里会缺失：' +
+            String(j.url).slice(0, 60));
+        });
+        if (bad.length > 5) note('另有 ' + (bad.length - 5) + ' 处图片/背景图同样无法内联');
+      }
+      /* 刚换上的 data: 还没解码完就去栅格化会画成空白，这里等它们真的就绪 */
+      return waitForImages(changed);
+    });
+  }
+
+  /* 故意不用 rAF：后台标签页里 requestAnimationFrame 压根不触发，会把整条导出链拖死 */
+  function waitForImages(nodes) {
+    var pending = nodes.filter(function (n) { return n && !n.complete; });
+    if (!pending.length) return Promise.resolve();
+    return Promise.all(pending.map(function (n) {
+      return new Promise(function (res) {
+        var t = setTimeout(res, 6000);
+        n.addEventListener('load', function () { clearTimeout(t); res(); }, { once: true });
+        n.addEventListener('error', function () { clearTimeout(t); res(); }, { once: true });
+      });
+    })).then(function () { /* ignore */ });
+  }
+
+  function buildSlide(slide, ctx, opts, warn) {
+    function note(msg) { if (typeof warn === 'function') warn(msg); }
     return WD.render.mountFrame(slide.doc, { timeout: 25000 })
+      .then(function (m) { return inlineSlideImages(m.doc, note).then(function () { return m; }); })
       .then(function (m) {
         var doc = m.doc, win = m.win;
         var paintBoxes = collectPaintBoxes(doc, win);
@@ -5023,9 +5607,10 @@ body.dragging-file::after {
           return covered.some(function (t) { return rectsOverlap(c.box, t.box); });
         });
 
+        var regionOk = false;
         var coveredPromise = occluders.length
           ? coveredRegionPicture(m, occluders, covered, ctx).then(function (r) {
-              if (r) { shapes.push(r.xml); rels.push(r.rel); }
+              if (r) { shapes.push(r.xml); rels.push(r.rel); regionOk = true; }
             })
           : Promise.resolve();
 
@@ -5040,45 +5625,92 @@ body.dragging-file::after {
         }).then(function () {
           var skipSubtree = new Set();
           toRaster.forEach(function (c) { markSubtree(c.node, skipSubtree); });
+          /* 并进遮挡区域贴图的元素同样已经画过了；但贴图失败时不能跳，否则内容彻底丢失 */
+          if (regionOk) occluders.forEach(function (c) { markSubtree(c.node, skipSubtree); });
 
-          /* ⑥-a 形状层 */
-          paintBoxes.forEach(function (item) {
-            if (item.reasons && item.reasons.length) return;
-            if (skipSubtree.has(item.node)) return;
-            if (item.tag === 'img') {
-              var src = item.node.currentSrc || item.node.src || item.node.getAttribute('src') || '';
-              if (!/^data:/.test(src)) return;
-              var parsed = U.dataUrlToBytes(src);
-              if (!parsed) return;
-              var name = ctx.addMedia(parsed.bytes, parsed.mime);
-              var relId = 'rIdImg' + ctx.mediaIndex;
-              shapes.push(pictureXml(nextId(), U.describeElement(item.node), item.box, relId,
-                rotationOf(item.cs)));
-              rels.push({ id: relId, name: name });
-              return;
-            }
-            var bg = U.parseColor(item.cs.backgroundColor);
-            var fillXml = U.isVisibleColor(bg) ? solidFill(bg) : noFill();
-            var bd = item.border;
-            var line = bd.any ? lineXml(bd.color, bd.width, bd.style) : noLine();
-            shapes.push(rectShapeXml(nextId(), U.describeElement(item.node), item.box, fillXml, line, {
-              adj: radiusToAdj(item.cs, item.box.w, item.box.h),
-              shadow: item.cs.boxShadow,
-              rot: rotationOf(item.cs)
-            }));
+          return prefetchBgSizes(paintBoxes).then(function (bgSizes) {
+            /* ⑥-a 形状层 */
+            paintBoxes.forEach(function (item) {
+              if (item.reasons && item.reasons.length) return;
+              if (skipSubtree.has(item.node)) return;
+              var elName = U.describeElement(item.node);
+              if (item.tag === 'img') {
+                var src = item.node.currentSrc || item.node.src || item.node.getAttribute('src') || '';
+                if (!/^data:/i.test(src)) {
+                  /* 到这里说明 inlineSlideImages 已经试过并且失败，那边已经报过具体地址了 */
+                  return;
+                }
+                var parsed = U.dataUrlToBytes(src);
+                if (!parsed) { note('一张图片的数据无法解析，导出中已跳过'); return; }
+                var name = ctx.addMedia(parsed.bytes, parsed.mime);
+                var relId = 'rIdImg' + ctx.mediaIndex;
+                shapes.push(pictureXml(nextId(), elName, item.box, relId,
+                  rotationOf(item.cs)));
+                rels.push({ id: relId, name: name });
+                return;
+              }
+
+              /* 背景图：单独出一张图片形状，元素里的文字仍然是可编辑文本 */
+              var bgu = bgDataUrl(item.cs);
+              var bgPic = null;
+              if (bgu) {
+                var bytes = U.dataUrlToBytes(bgu);
+                if (!bytes) {
+                  note('一处背景图的数据无法解析，导出中已跳过');
+                } else {
+                  var nat = bgSizes[bgu];
+                  var p = nat ? bgPlacement(item.cs, item.box, nat.w, nat.h) : null;
+                  if (!p) {
+                    /* 尺寸取不到时退化为「拉伸铺满」，至少不会整块消失 */
+                    p = { x: item.box.x, y: item.box.y, w: item.box.w, h: item.box.h,
+                          src: { l: 0, t: 0, r: 0, b: 0 } };
+                  }
+                  var bgName = ctx.addMedia(bytes.bytes, bytes.mime);
+                  var bgRelId = 'rIdImg' + ctx.mediaIndex;
+                  bgPic = { xml: bgPictureXml(nextId(), elName + ' 背景图', p, bgRelId),
+                            rel: { id: bgRelId, name: bgName } };
+                }
+              }
+
+              var bg = U.parseColor(item.cs.backgroundColor);
+              var bd = item.border;
+              var adj = radiusToAdj(item.cs, item.box.w, item.box.h);
+              var rot = rotationOf(item.cs);
+              if (bgPic) {
+                /* 底色 → 背景图 → 描边，三层顺序和浏览器绘制顺序一致 */
+                if (U.isVisibleColor(bg)) {
+                  shapes.push(rectShapeXml(nextId(), elName, item.box, solidFill(bg), noLine(),
+                    { adj: adj, shadow: item.cs.boxShadow, rot: rot }));
+                }
+                shapes.push(bgPic.xml);
+                rels.push(bgPic.rel);
+                if (bd.any) {
+                  shapes.push(rectShapeXml(nextId(), elName, item.box, noFill(),
+                    lineXml(bd.color, bd.width, bd.style), { adj: adj, rot: rot }));
+                }
+                return;
+              }
+
+              var fillXml = U.isVisibleColor(bg) ? solidFill(bg) : noFill();
+              var line = bd.any ? lineXml(bd.color, bd.width, bd.style) : noLine();
+              shapes.push(rectShapeXml(nextId(), elName, item.box, fillXml, line, {
+                adj: adj,
+                shadow: item.cs.boxShadow,
+                rot: rot
+              }));
+            });
+
+            /* ⑥-b 文字层 */
+            textBlocks.forEach(function (block) {
+              if (coveredSet.has(block.node)) return;
+              if (skipSubtree.has(block.node)) return;
+              buildTextShapes(block).forEach(function (x) { shapes.push(x); });
+            });
+
+            var bgXml = backgroundShapeXml(pageBackground(doc, win));
+            m.frame.remove();
+            return { xml: slideXml(bgXml + shapes.join(''), ''), rels: rels, notes: slide.notes || '' };
           });
-
-          /* ⑥-b 文字层 */
-          textBlocks.forEach(function (block) {
-            if (coveredSet.has(block.node)) return;
-            if (skipSubtree.has(block.node)) return;
-            if (complex.indexOf(block) >= 0) return;
-            buildTextShapes(block).forEach(function (x) { shapes.push(x); });
-          });
-
-          var bgXml = backgroundShapeXml(pageBackground(doc, win));
-          m.frame.remove();
-          return { xml: slideXml(bgXml + shapes.join(''), ''), rels: rels, notes: slide.notes || '' };
         });
       });
   }
@@ -5169,9 +5801,12 @@ body.dragging-file::after {
     });
   }
 
+  /* 已经烘进贴图的元素：自己 + 全部后代都要跳过。
+     漏掉「自己」会让同一个元素既出现在图片里、又再输出一份矢量形状和文字，
+     导出后看起来就是重影 / 文字发虚。 */
   function markSubtree(node, set) {
+    set.add(node);
     for (var i = 0; i < node.children.length; i++) {
-      set.add(node.children[i]);
       markSubtree(node.children[i], set);
     }
   }
@@ -5836,7 +6471,7 @@ body.dragging-file::after {
 /* ──────────────────────────────────────────────────────────────────────────
    06-ui.js
    ────────────────────────────────────────────────────────────────────────── */
-﻿/* ============================================================================
+/* ============================================================================
    智演引擎 / WizDeck — 工作台 UI 与编辑交互
    ========================================================================== */
 (function (global) {
@@ -5847,8 +6482,9 @@ body.dragging-file::after {
   var store = WD.store;
   var W = U.CANVAS_W, H = U.CANVAS_H;
 
-  /* 浮动工具条的尺寸在 refreshOverlay() 里用 offsetWidth/offsetHeight 实测，
-     不再写死常量 —— 图标尺寸一改，写死的数字就会和 CSS 对不上。 */
+  /* 选中元素时浮在画布上的那条工具条已删除（它压住元素内容，5 个键又全有
+     等价路径）。选择框与八向手柄仍用 offsetWidth 实测尺寸，不写死常量 —— 
+     图标尺寸一改，写死的数字就会和 CSS 对不上。 */
 
   /* ══════════════════════════════════════════════════════════════════════
      0. 小工具
@@ -6078,10 +6714,16 @@ body.dragging-file::after {
     EM: 1, STRONG: 1, B: 1, I: 1, U: 1, S: 1, SMALL: 1, BIG: 1, MARK: 1, SUB: 1, SUP: 1,
     CODE: 1, KBD: 1, SAMP: 1, VAR: 1, ABBR: 1, CITE: 1, Q: 1, TIME: 1, SPAN: 1, A: 1,
     LABEL: 1, BDI: 1, BDO: 1, RUBY: 1, RT: 1, RP: 1, DEL: 1, INS: 1,
+    /* MathML 也按「行内文字片段」处理：<mi><mo><mn> 等不能被当成一个可摆放的元素，
+       它们的容器（公式 div / <math> 块）才是真正要选的对象。 */
+    MI: 1, MO: 1, MN: 1, MS: 1, MTEXT: 1, MROW: 1, ANNOTATION: 1
   };
 
   function isInlineTextTag(node, win) {
-    if (!INLINE_TEXT_TAGS[node.tagName]) return false;
+    /* MathML / SVG 节点的 tagName 是小写（'mi' / 'tspan'），HTML 节点是大写。
+       大小写都查，免得「MathML 公式点中 mi 元素」这种事发生。 */
+    var tn = node.tagName;
+    if (!INLINE_TEXT_TAGS[tn] && !INLINE_TEXT_TAGS[tn.toUpperCase()]) return false;
     if (hasOwnPaint(node, win)) return false;      // 有底色/边框 → 当成小标签块
     if (node.tagName === 'IMG' || node.tagName === 'SVG') return false;
     return true;
@@ -6140,6 +6782,9 @@ body.dragging-file::after {
     /* 整页底板不参与点选 */
     if (isPageBackdrop(node, win)) return false;
 
+    /* 公式是「内容=LaTeX 源」的独立对象：透明底也能点中编辑 */
+    if (node.hasAttribute && node.getAttribute('data-wd-added') === 'formula') return true;
+
     if (!hasBlockChildren(node, win)) {
       /* 叶子：有文字、或者有绘制 */
       if ((node.textContent || '').trim()) return true;
@@ -6164,6 +6809,43 @@ body.dragging-file::after {
       n = n.parentElement;
     }
     return best;
+  }
+
+  /* 父页 client 坐标 → 帧内坐标 + 命中元素。
+     舞台是 1920×1080 的 iframe 套 transform:scale，帧内 pointer 事件的
+     clientX/clientY 本来就是帧内坐标（pickAt 的既有约定），只有右键这类
+     **发生在父页**的事件才需要这次逆变换：(client - stageRect) / scale。
+     缩放比沿用 E.stage.scale —— 与 normalizePoint()、框选桥接处同一套。 */
+  function clientToFrame(clientX, clientY) {
+    if (!E.stage || !E.stage.el || !E.stage.ready) return null;
+    var s = E.stage.scale;
+    if (!(s > 0)) return null;
+    var r = E.stage.el.getBoundingClientRect();
+    var x = (clientX - r.left) / s;
+    var y = (clientY - r.top) / s;
+    return { x: x, y: y, hit: pickAt(x, y) };
+  }
+
+  /* clientToFrame 的逆变换：帧内坐标 → 父页 client 坐标。
+     菜单是父页里 position:fixed 的节点，只认父页 client 坐标。 */
+  function frameToClient(fx, fy) {
+    if (!E.stage || !E.stage.el || !E.stage.ready) return null;
+    var r = E.stage.el.getBoundingClientRect();
+    return { x: r.left + fx * E.stage.scale, y: r.top + fy * E.stage.scale };
+  }
+
+  /* 画布右键的统一收尾：先让选区跟上光标下的元素，再开菜单。
+     关键在「跟上」——原来右键不改选区，于是右键另一张卡片后，菜单里的
+     「编辑文字 / 删除 / 换图层」全都作用在**上一次选中**的元素上，
+     用户看到的是"点了没反应 / 改错了对象"。
+     规则：右键空白 → 清空选区（回到页面操作）；右键已选中的元素 → 保持选区
+     （多选时对齐/分布仍然可用）；右键别的元素 → 只选它一个。 */
+  function openCanvasContextMenu(hit, loc) {
+    var keepMulti = !!(hit && isSelected(hit) && E.selection.length > 1);
+    if (!hit) clearSelection();
+    else if (!isSelected(hit)) setSelection([hit]);
+    else refreshOverlay();
+    openContextMenu({ x: loc.x, y: loc.y, forceMulti: keepMulti });
   }
 
   /* 从命中点向上找出最适合选中的元素 */
@@ -6257,7 +6939,7 @@ body.dragging-file::after {
            iframe#stage-frame
            .guides          ← 在 .stage 内
            .overlay         ← 在 .stage 内
-             #frame-box / #marquee / #ov-toolbar
+             #frame-box / #marquee
 
      也就是说 **.overlay 与 .guides 都在被缩放的 .stage 里面**，
      它们自身的 left/top/width/height 用的是「画布坐标」（1920×1080 的空间），
@@ -6272,7 +6954,6 @@ body.dragging-file::after {
   function refreshOverlay() {
     var box = $('frame-box');
     var label = $('ov-label');
-    var bar = $('ov-toolbar');
 
     /* 选区可能指向上一份文档里的节点（撤销 / 重做 / 切页都会重建舞台文档）。
        这种游离节点 getBoundingClientRect() 全是 0，会让选择框缩成一点、
@@ -6281,7 +6962,6 @@ body.dragging-file::after {
 
     if (!E.selection.length || E.editing) {
       box.hidden = true;
-      bar.hidden = true;
       updateStatusSel();
       return;
     }
@@ -6311,18 +6991,87 @@ body.dragging-file::after {
       ? ('已选 ' + E.selection.length + ' 个元素')
       : (U.describeElement(E.selection[0]) + '  ' + Math.round(vb.w) + '×' + Math.round(vb.h));
 
-    /* 浮动工具条放在选择框上方，空间不足则放到下方；同样用画布坐标并夹在画布内。
-       宽高改成**实测**而不是写死常量：它会随图标尺寸、缩放一起变，
-       而工具条本身做了 counter-scale，实测出来的正好是它在屏幕上真正占的尺寸
-       （offsetWidth 不受祖先 transform 影响，而 scale 已被自身抵消）。
-       写死的数字迟早和 CSS 对不上，夹取就会算错、工具条贴边被裁掉。 */
-    bar.hidden = false;
-    var barW = bar.offsetWidth || 168;
-    var barH = bar.offsetHeight || 40;
-    var barTop = vb.y - barH - 8;
-    if (barTop < 0) barTop = vb.y + vb.h + 8;
-    bar.style.left = Math.max(0, Math.min(W - barW, vb.x)) + 'px';
-    bar.style.top = Math.max(0, Math.min(H - barH, barTop)) + 'px';
+    /* 端点 / 拐点 / 切线 / 顶点手柄：随选中元素的种类切换。
+       · 线条族（直线/箭头/曲线/连接线）→ 两个端点；
+       · 连接线（肘形，有 bend 无 c1）→ 再多一个拐点手柄；
+       · 曲线族（有 c1/c2 三次贝塞尔切线）→ 两端各一个切线手柄 + 指引线；
+       · 多边形 → 每个顶点一个可拖手柄。
+       位置一律用 toBox：比例点(0~100) × 当前盒子像素 —— 与 beginEndpointDrag
+       的 toAbs 同一套换算，斜线 / 曲线端点才会各在其位。 */
+    var epStart = box.querySelector('.h-ep-start');
+    var epEnd = box.querySelector('.h-ep-end');
+    var epBend = box.querySelector('.h-ep-bend');
+    var epC1 = box.querySelector('.h-ep-c1');
+    var epC2 = box.querySelector('.h-ep-c2');
+    var tangentGuide = box.querySelector('.tangent-guide');
+    var spoke1 = box.querySelector('.t-spoke-1');
+    var spoke2 = box.querySelector('.t-spoke-2');
+    var vtxLayer = box.querySelector('.vtx-layer');
+    var selNode = E.selection[0];
+    var kind = selNode && selNode.getAttribute && selNode.getAttribute('data-wd-added');
+    /* 线条家族（直线/箭头/曲线/连接线）：只留端点，把包围盒那圈边框也去掉 ——
+       对一个斜着画的细线条来说，一圈矩形边框既挡视线又没意义，拖端点才是它的操作。 */
+    box.classList.toggle('box-line',
+      !!(selNode && !multi && WD.elements.isLineKind && WD.elements.isLineKind(kind)));
+
+    var toBox = function (p) { return { x: p[0] / 100 * vb.w, y: p[1] / 100 * vb.h }; };
+    var place = function (el, p) {
+      var s = toBox(p);
+      el.style.left = s.x + 'px';
+      el.style.top = s.y + 'px';
+      return s;
+    };
+    var hideAll = function () {
+      [epStart, epEnd, epBend, epC1, epC2].forEach(function (el) { if (el) el.classList.remove('shown'); });
+      if (tangentGuide) tangentGuide.style.display = 'none';
+      if (vtxLayer) vtxLayer.innerHTML = '';
+    };
+
+    var lp = (selNode && !multi && WD.elements.linePointsOf) ? WD.elements.linePointsOf(selNode) : null;
+    if (lp && !multi) {
+      place(epStart, lp.p1); epStart.classList.add('shown');
+      place(epEnd, lp.p2); epEnd.classList.add('shown');
+      /* 肘形连接线才有 bend 且没有切线手柄；曲线族改走 c1/c2，隐藏旧拐点。 */
+      if (lp.bend && !lp.c1) {
+        place(epBend, lp.bend); epBend.classList.add('shown');
+      } else {
+        epBend.classList.remove('shown');
+      }
+      /* 曲线族：两条切线手柄 + 从锚点连到手柄的指引线。 */
+      if (lp.c1 && lp.c2 && tangentGuide) {
+        var s1 = place(epC1, lp.c1); epC1.classList.add('shown');
+        var s2 = place(epC2, lp.c2); epC2.classList.add('shown');
+        var a1 = toBox(lp.p1), a2 = toBox(lp.p2);
+        tangentGuide.style.display = 'block';
+        tangentGuide.setAttribute('width', vb.w);
+        tangentGuide.setAttribute('height', vb.h);
+        tangentGuide.setAttribute('viewBox', '0 0 ' + vb.w + ' ' + vb.h);
+        spoke1.setAttribute('x1', a1.x); spoke1.setAttribute('y1', a1.y);
+        spoke1.setAttribute('x2', s1.x); spoke1.setAttribute('y2', s1.y);
+        spoke2.setAttribute('x1', a2.x); spoke2.setAttribute('y1', a2.y);
+        spoke2.setAttribute('x2', s2.x); spoke2.setAttribute('y2', s2.y);
+        epBend.classList.remove('shown');
+      } else {
+        epC1.classList.remove('shown');
+        epC2.classList.remove('shown');
+        tangentGuide.style.display = 'none';
+      }
+      if (vtxLayer) vtxLayer.innerHTML = '';
+    } else if (selNode && !multi && kind === 'poly' && WD.elements.verticesOf) {
+      /* 多边形：逐顶点手柄。先清掉线条族那排手柄，再按顶点数填 .vtx-layer。 */
+      hideAll();
+      var verts = WD.elements.verticesOf(selNode);
+      for (var vi = 0; vi < verts.length; vi++) {
+        var vh = document.createElement('div');
+        vh.className = 'handle h-vtx shown';
+        vh.setAttribute('data-h', 'vtx-' + vi);
+        vh.title = '顶点 ' + (vi + 1);
+        place(vh, verts[vi]);
+        vtxLayer.appendChild(vh);
+      }
+    } else {
+      hideAll();
+    }
 
     /* 箭头 / 双箭头是「按当前尺寸现算 path」的：拖完手柄、改完填充色、
        撤销重做，都要重画一次。refreshOverlay 恰好是这些时机都会经过的地方。 */
@@ -6963,9 +7712,27 @@ body.dragging-file::after {
     st.margin = '0';
     st.boxSizing = 'border-box';
     Object.keys(spec.style).forEach(function (k) { st[k] = spec.style[k]; });
+    /* 规格表里的自定义数据属性（线条类的两个端点 / 自由绘制与多边形的点集）。
+       写在 style 之后：syncLine 要读它们才能算出路径。 */
+    if (spec.attrs) {
+      Object.keys(spec.attrs).forEach(function (k) { node.setAttribute(k, spec.attrs[k]); });
+    }
+    /* 线条类把三个比例点**显式写出来**：读取时有默认值兜底，但写出来之后
+       存档是自描述的（别人打开工程文件能直接看到几何），
+       拖端点时也不必先判断「属性不存在」这一种情况。 */
+    if (WD.elements.linePointsOf) {
+      var lpDef = WD.elements.linePointsOf(node);
+      if (lpDef && !node.getAttribute('data-wd-p1')) {
+        node.setAttribute('data-wd-p1', JSON.stringify(lpDef.p1));
+        node.setAttribute('data-wd-p2', JSON.stringify(lpDef.p2));
+        if (lpDef.bend) node.setAttribute('data-wd-bend', JSON.stringify(lpDef.bend));
+        if (lpDef.c1) node.setAttribute('data-wd-c1', JSON.stringify(lpDef.c1));
+        if (lpDef.c2) node.setAttribute('data-wd-c2', JSON.stringify(lpDef.c2));
+      }
+    }
     node.textContent = spec.text || '';
     if (spec.html) node.innerHTML = spec.html;
-    /* 箭头 / 双箭头是自己画 SVG 的，边框盒子本身透明 */
+    /* 线条类是自己画 SVG 的，边框盒子本身透明 */
     if (WD.elements.syncLine(node)) {
       st.overflow = 'visible';
     }
@@ -6976,6 +7743,63 @@ body.dragging-file::after {
     commit('添加' + spec.label);
     renderLayers();
     return node;
+  }
+
+  /* ── 画布绘制（自由绘制 / 多边形）的落地与桥 ──────────────────────────
+     绘制流程在 08-draw.js：它只管采集点、画预览、判定闭合；
+     落到文档里、进撤销栈、被选中，都是 UI 层的事，通过这个桥交出去。 */
+  function createDrawnElement(opt) {
+    opt = opt || {};
+    var kind = opt.kind === 'poly' ? 'poly' : 'drawn';
+    var root = rootEl();
+    var doc = frameDoc();
+    if (!root || !doc) return null;
+    var w = Math.max(6, Math.round(opt.w || 100));
+    var h = Math.max(6, Math.round(opt.h || 100));
+    var node = doc.createElement('div');
+    node.setAttribute('data-wd-added', kind);
+    node.setAttribute('data-wd-points', JSON.stringify(opt.points || []));
+    var st = node.style;
+    st.position = 'absolute';
+    st.left = Math.round(opt.x || 0) + 'px';
+    st.top = Math.round(opt.y || 0) + 'px';
+    st.width = w + 'px';
+    st.height = h + 'px';
+    st.margin = '0';
+    st.boxSizing = 'border-box';
+    /* 描边图形：底色透明，颜色/粗细放 data-wd-stroke / data-wd-w
+       （与规格表里其它描边形状一致；盒子本身恒透明）。 */
+    st.background = 'transparent';
+    node.setAttribute('data-wd-stroke', '#3b6fd4');
+    node.setAttribute('data-wd-w', '3');
+    node.style.zIndex = String(nextZ());
+    root.appendChild(node);
+    WD.elements.syncLine(node);
+    st.overflow = 'visible';
+    setSelection([node]);
+    commit(kind === 'poly' ? '绘制多边形' : '自由绘制');
+    renderLayers();
+    return node;
+  }
+
+  /* 把绘制工具需要的最小接口交出去。少给一点，绘制层就少一层耦合：
+     它拿不到检查器 / 面板 / 撤销栈的内部状态，也就不会误用。 */
+  function installDrawBridge() {
+    if (!global.WD) return;
+    global.WD.drawBridge = {
+      size: function () { return { w: W, h: H }; },
+      root: rootEl,
+      doc: frameDoc,
+      overlay: function () { return $('overlay'); },
+      stage: function () { return E.stage; },
+      isEditing: function () { return !!E.editing; },
+      setCursor: function (c) {
+        var d = frameDoc();
+        if (d && d.body) d.body.style.cursor = c || '';
+      },
+      hint: function (text, tone, ms) { toast(text, tone || 'info', ms || 2200); },
+      create: createDrawnElement,
+    };
   }
 
   /* 元素规格表。
@@ -7038,19 +7862,61 @@ body.dragging-file::after {
       tag: 'div', label: '平行四边形', w: 400, h: 250,
       style: { background: '#dce7f5', clipPath: 'polygon(24% 0%, 100% 0%, 76% 100%, 0% 100%)' },
     },
-    /* 一维线条：高度锁死，拖角也不会变成二维色块。
-       箭头 / 双箭头由 WD.elements.syncLine() 生成固定尺寸的箭头 + 可拉伸的杆。 */
+    /* ── 线条类：两点头模型 ──────────────────────────────────────────
+       几何由 data-wd-p1 / p2（/ bend）三个 0~100 的比例点决定，
+       盒子只是这三点的包围盒 —— 所以斜线天然成立（原来是锁死高度的水平线）。
+       颜色 / 粗细的真源是 data-wd-stroke / data-wd-w，**不是** CSS 盒子：
+       盒子必须恒为透明（图形由里面的 SVG 画），CSS 上的颜色会被 syncLine 刷掉。
+       选中后只露两个端点手柄 + 一个拐点手柄（不露 8 个盒手柄）——
+       要改形状就拖点，而不是缩放盒子。
+       自由绘制 / 多边形另走 data-wd-points（顶点集），由 WD.drawTool 采集。 */
     line: {
-      tag: 'div', label: '直线', w: 620, h: 6,
-      style: { background: '#3b6fd4' },
+      tag: 'div', label: '直线', w: 620, h: 8,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
     },
     arrow: {
       tag: 'div', label: '箭头', w: 620, h: 26,
       style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
     },
     dblarrow: {
       tag: 'div', label: '双向箭头', w: 620, h: 26,
       style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    curve: {
+      tag: 'div', label: '曲线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    connector: {
+      tag: 'div', label: '连接线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    connectorcurve: {
+      tag: 'div', label: '曲线连接线', w: 620, h: 150,
+      style: { background: 'transparent' },
+      attrs: { 'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3' },
+    },
+    /* 这两个的默认点集 = 一条斜线 / 一个六边形，够用户先看到「插进来的是什么」，
+       真正的形状由画布上拖 / 点采集后覆盖。 */
+    drawn: {
+      tag: 'div', label: '自由绘制', w: 520, h: 300,
+      style: { background: 'transparent' },
+      attrs: {
+        'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3',
+        'data-wd-points': '[[4,88],[26,44],[48,62],[70,22],[96,36]]',
+      },
+    },
+    poly: {
+      tag: 'div', label: '多边形', w: 420, h: 360,
+      style: { background: 'transparent' },
+      attrs: {
+        'data-wd-stroke': '#3b6fd4', 'data-wd-w': '3',
+        'data-wd-points': '[[50,2],[92,27],[92,73],[50,98],[8,73],[8,27]]',
+      },
     },
     /* 表格 / 公式 / 图表走各自的工厂，不在规格表里 */
   };
@@ -7129,11 +7995,16 @@ body.dragging-file::after {
     return node;
   }
 
-  /* LaTeX 公式：弹窗输入，带实时预览，OK 之后插进画布 */
-  function openLatexDialog() {
-    var preset = 'E = m c^2';
+  /* LaTeX 公式：弹窗输入，带实时预览。
+     既用于「插入 LaTeX」走 create 路径，也用于「编辑已有公式」走 update 路径。
+     传入 existing 时弹窗标题换成「编辑公式」、默认填它的 LaTeX、OK 后就地更新
+     （不是再插一个 —— 改公式不应该让画布多一张）。 */
+  function openLatexDialog(preset, existing) {
+    preset = preset || 'E = m c^2';
+    var title = existing ? '编辑 LaTeX 公式' : '插入 LaTeX 公式';
+    var okLabel = existing ? '更新' : '插入';
     showModal({
-      title: '插入 LaTeX 公式',
+      title: title,
       html: '<div class="form-row"><span class="form-lbl">LaTeX</span>' +
             '<input class="input" id="tex-src" value="' + preset.replace(/"/g, '&quot;') +
             '" placeholder="例如 \\frac{a}{b} + \\sqrt{x}"></div>' +
@@ -7146,10 +8017,11 @@ body.dragging-file::after {
           if (i) { i.value = '\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}'; refreshTexPreview(); }
         } },
         { label: '取消' },
-        { label: '插入', primary: true, keepOpen: false, onClick: function () {
+        { label: okLabel, primary: true, keepOpen: false, onClick: function () {
           var v = ($('tex-src') || {}).value || '';
           if (!v.trim()) { toast('公式内容不能为空', 'warn'); return; }
-          insertFormula(v);
+          if (existing) { updateFormula(existing, v); }
+          else { insertFormula(v); }
         } },
       ],
     });
@@ -7160,6 +8032,12 @@ body.dragging-file::after {
       src.focus();
       src.select();
     }
+  }
+
+  function updateFormula(node, src) {
+    node.setAttribute('data-wd-latex', src);
+    node.innerHTML = WD.elements.latexToMathML(src);
+    commit('修改公式');
   }
 
   function refreshTexPreview() {
@@ -7200,90 +8078,561 @@ body.dragging-file::after {
     return img;
   }
 
-  /* 重画一张图表：数据改了以后走这里，尺寸不变、位置不变 */
-  function repaintChart(img, data) {
+  /* 重画一张图表：数据改了以后走这里，尺寸不变、位置不变。
+     切类型（柱状 ↔ 折线 ↔ 饼状）时 kind 与原来不同，要连 data-wd-chart-kind
+     一起改写 —— 只重画不记类型的话，下次再进这段又会读回旧类型。 */
+  function repaintChart(img, data, kind) {
     if (!img) return;
-    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+    var prev = img.getAttribute('data-wd-chart-kind') || 'bar';
+    var k = kind || prev;
+    if (k !== prev) {
+      img.setAttribute('data-wd-chart-kind', k);
+      img.setAttribute('data-wd-added', 'chart-' + k);
+    }
     var cv = document.createElement('canvas');
     cv.width = 960; cv.height = 560;
-    var norm = WD.elements.normalizeChartData(data, kind);
-    WD.elements.drawChart(kind, cv, norm);
+    var norm = WD.elements.normalizeChartData(data, k);
+    WD.elements.drawChart(k, cv, norm);
     img.setAttribute('data-wd-chart', JSON.stringify(norm));
     img.src = cv.toDataURL('image/png');
   }
 
-  /* 双击图表 → 数据表编辑器。
-     分类与数值都用逗号分隔的自由输入框：一行一个系列，改起来比表格控件快得多，
-     真要正经填表再插一张新图不迟。 */
-  function openChartDialog(img) {
-    if (!img) return;
-    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+  /* ══════════════════════════════════════════════════════════════════════
+     图表数据：右栏常驻段，改一下就重画
+     ──────────────────────────────────────────────────────────────────────
+     原来是「双击图表 → 居中模态框 → 填一堆框 → 点应用」。毛病有三：
+       ① 模态框把画布盖住，改的时候看不到图；
+       ② 不点「应用」就没有反馈，容易以为没生效；
+       ③ 填错只能整个重来。
+     现在这段随选区出现/消失（选中的是图表才显示），输入停手 0.4 秒
+     自动重画并入撤销栈。分类与数值仍是逗号分隔的自由输入 ——
+     一行一个系列，比表格控件快得多，真要正经填表再插一张新图不迟。
+
+     两条实现要点：
+     · 签名相同就不重建 DOM。打字过程中每次防抖都会带着新数据回来，
+       若无脑重建，输入框会被换掉，焦点和光标全丢。
+     · 真要重建时，把焦点和光标位置还回去 —— 换掉 DOM 是为了显示新值，
+       不是为了打断正在输入的人。 */
+  var chartPanelSig = '';
+  /* 「自定义背景色」的回显：色板里没有这个颜色时要把它画在那一格上。
+     存在模块级而不是 button 的 dataset 上 —— dataset 会把值写进 DOM，
+     而这个值并不属于文档内容。 */
+  var chartCustomBg = '';
+
+  function chartDataOf(img) {
+    if (!img || !img.getAttribute) return null;
+    if (!img.hasAttribute('data-wd-chart')) return null;
     var raw = null;
     try { raw = JSON.parse(img.getAttribute('data-wd-chart') || 'null'); } catch (e) { raw = null; }
-    var d = WD.elements.normalizeChartData(raw, kind);
-    var titleName = '图表标题';
-    var labelName = '分类';
+    var kind = img.getAttribute('data-wd-chart-kind') || 'bar';
+    return { img: img, kind: kind, d: WD.elements.normalizeChartData(raw, kind) };
+  }
 
-    function seriesField(s, i) {
-      return '<div class="chart-row">' +
-        '<input class="input" id="cs-n' + i + '" value="' + U.escapeHtml(s.name) + '" placeholder="系列名称">' +
-        '<input class="input" id="cs-v' + i + '" value="' + U.escapeHtml(s.data.join(', ')) +
-        '" placeholder="' + (kind === 'pie' ? '各分类的数值' : '与分类一一对应的数值') + '">' +
-        '</div>';
+  function renderChartPanel(node) {
+    var sec = $('sec-chart');
+    if (!sec) return;
+    var info = chartDataOf(node);
+    sec.hidden = !info;
+    if (!info) { chartPanelSig = ''; return; }
+
+    var d = info.d, kind = info.kind;
+    /* 签名：结构与「哪些系列是哪个颜色」都算进去。
+       只比 JSON.stringify(d) 会漏掉一种情况：点色板换了一个**别的系列已经在用**的
+       颜色时，整排颜色其实被重排了，但数据看起来「没变」，签名相同于是不重建 ——
+       色板上的选中态就停在旧颜色上。把 series 的颜色单独串进来就不会漏。 */
+    var sig = kind + '|' + JSON.stringify(d) + '|' +
+      d.series.map(function (s) { return s.color; }).join(',');
+    if (sig === chartPanelSig) return;
+
+    var act = document.activeElement;
+    var keepId = (act && act.id && sec.contains(act)) ? act.id : '';
+    var caret = keepId ? [act.selectionStart, act.selectionEnd] : null;
+
+    $('chf-title').value = d.title;
+    $('chf-legend').checked = !!d.showLegend;
+    $('chf-values').checked = !!d.showValues;
+
+    renderChartSeries(d);
+    renderChartGrid(d);
+    renderChartBg(d);
+
+    chartPanelSig = sig;
+    if (keepId) {
+      var f = $(keepId);
+      if (f) {
+        /* 重建之后输入框位置也可能变了，先滚到视野里再聚焦 */
+        if (f.scrollIntoView) { try { f.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 老浏览器 */ } }
+        f.focus();
+        if (caret && caret[0] != null) { try { f.setSelectionRange(caret[0], caret[1]); } catch (e) { /* number 类输入框不支持 */ } }
+      }
     }
+  }
 
-    var html = '<div class="form-row"><span class="form-lbl">图表标题</span>' +
-      '<input class="input" id="ch-title" value="' + U.escapeHtml(d.title) + '" placeholder="留空则不画标题"></div>' +
-      '<div class="form-row"><span class="form-lbl">' + labelName + '</span>' +
-      '<input class="input" id="ch-labels" value="' + U.escapeHtml(d.labels.join(', ')) + '" placeholder="用逗号分隔，如 一月, 二月, 三月"></div>' +
-      '<div class="form-row"><span class="form-lbl">系列与数值</span></div>' +
-      d.series.map(seriesField).join('') +
-      '<div class="form-row chart-opts">' +
-      '<label class="chk"><input type="checkbox" id="ch-legend"' + (d.showLegend ? ' checked' : '') + '> 显示图例</label>' +
-      '<label class="chk"><input type="checkbox" id="ch-values"' + (d.showValues ? ' checked' : '') + '> 显示数值</label>' +
-      '</div>' +
-      '<p class="form-tip">' + titleName + '、图例、坐标轴文字与数值都会画进图里；' +
-      '双击图表随时可以再进来改。</p>';
+  /* ── 系列行：名称 + 图表类型 + 颜色 + 删除 ──
+     每行自带一个**图表类型**：同一张图里柱状与折线可以混（一个系列一种画法），
+     这比在顶上放一个「整张图是什么类型」的分段控件更贴近实际用法 ——
+     想「总量用柱、趋势用线」时，原来那个全局开关根本做不到。
+     饼图只有一个系列（颜色即扇区轮转的起点），所以那一行不给类型也不给删除。 */
+  var SERIES_TYPES = [
+    { k: 'bar', txt: '柱状' },
+    { k: 'chartline', txt: '折线' },
+  ];
 
-    showModal({
-      title: '编辑图表数据',
-      html: html,
-      buttons: [
-        { label: '取消' },
-        { label: '恢复示例数据', onClick: function () {
-          repaintChart(img, WD.elements.defaultChartData(kind));
-          commit('恢复示例图表');
-          toast('已恢复为示例数据', 'ok');
-        } },
-        /* keepOpen:true —— 校验没过时对话框要留在原地，不能顺手把用户填的内容一起关掉 */
-        { label: '应用', primary: true, keepOpen: true, onClick: function () {
-          var labels = ($('ch-labels') || {}).value || '';
-          var parts = labels.split(/[,，]/).map(function (s) { return s.trim(); })
-            .filter(function (s) { return s !== ''; });
-          if (!parts.length) { toast('至少要有一个分类', 'warn'); return; }
-          var series = [];
-          for (var i = 0; i < d.series.length; i++) {
-            var nm = ($('cs-n' + i) || {}).value;
-            var vv = ($('cs-v' + i) || {}).value || '';
-            series.push({
-              name: (nm == null ? '' : nm).trim() || d.series[i].name,
-              color: d.series[i].color,
-              data: vv.split(/[,，\s]+/).filter(function (s) { return s !== ''; }),
-            });
-          }
-          repaintChart(img, {
-            title: (($('ch-title') || {}).value || '').trim(),
-            labels: parts,
-            series: series,
-            showLegend: !!($('ch-legend') || {}).checked,
-            showValues: !!($('ch-values') || {}).checked,
-          });
-          commit('修改图表数据');
-          toast('图表已更新', 'ok');
-          hideModal();
-        } },
-      ],
+  function seriesKindOf(info, i) {
+    if (info.kind === 'pie') return 'bar';   /* 饼图下这个值不参与绘制 */
+    var k = info.d.seriesKind && info.d.seriesKind[i];
+    return k === 'chartline' ? 'chartline' : 'bar';
+  }
+
+  function renderChartSeries(d) {
+    var host = $('chf-series');
+    if (!host) return;
+    var isPie = d.kind === 'pie';
+    var info = { kind: d.kind, d: d };
+    var pal = WD.elements.chartPalette();
+    var rows = d.series.map(function (s, i) {
+      var row = el('div', { class: 'chart-row series-row' });
+      /* data-si 是「这一行对应哪个系列」：删过系列之后编号会跳，
+         不能再用行号当系列下标（读取时也靠它对齐）。 */
+      row.setAttribute('data-si', String(i));
+      var name = el('input', {
+        class: 'input', id: 'chf-n' + i, value: s.name || '',
+        placeholder: '系列名称', title: '系列名称'
+      });
+      name.setAttribute('data-si', String(i));
+      name.setAttribute('data-f', 'name');
+      row.appendChild(name);
+
+      if (!isPie) {
+        var sel = el('select', {
+          class: 'input series-type', id: 'chf-t' + i, title: '这个系列的画法'
+        });
+        sel.setAttribute('data-si', String(i));
+        sel.setAttribute('data-f', 'kind');
+        SERIES_TYPES.forEach(function (t) {
+          var o = document.createElement('option');
+          o.value = t.k; o.textContent = t.txt;
+          if (seriesKindOf(info, i) === t.k) o.selected = true;
+          sel.appendChild(o);
+        });
+        row.appendChild(sel);
+      }
+
+      var sw = el('button', {
+        class: 'sw sw-series', type: 'button', id: 'chf-c' + i,
+        title: '描边 / 线条色：点一下开色盘（Alt+点 沿色板轮换）'
+      });
+      sw.setAttribute('data-si', String(i));
+      sw.setAttribute('data-color', s.color || pal[i % pal.length]);
+      sw.setAttribute('data-f', 'stroke');
+      sw.style.background = s.color || pal[i % pal.length];
+      row.appendChild(sw);
+
+      /* 系列「填充色」：柱状 / 饼图 那个填实的色。
+         折线族没意义，但保持同一控件不让用户奇怪。 */
+      var fill = s.fillColor || s.color || pal[i % pal.length];
+      var swFill = el('button', {
+        class: 'sw sw-series sw-fill', type: 'button', id: 'chf-cf' + i,
+        title: '填充色（柱体 / 饼图扇区）：点一下开色盘（Alt+点 沿色板轮换）'
+      });
+      swFill.setAttribute('data-si', String(i));
+      swFill.setAttribute('data-color', fill);
+      swFill.setAttribute('data-f', 'fill');
+      swFill.style.background = fill;
+      row.appendChild(swFill);
+
+      /* 真正的取色器隐藏在背后：Shift+点色格 → 弹原生色盘 */
+      var pick = el('input', {
+        type: 'color', class: 'sw-pick', id: 'chf-cp' + i,
+        value: (s.color || pal[i % pal.length]).slice(1),
+        'data-si': String(i), title: '自定义颜色',
+        'data-f': 'stroke'
+      });
+      row.appendChild(pick);
+      var pickFill = el('input', {
+        type: 'color', class: 'sw-pick', id: 'chf-fp' + i,
+        value: fill.slice(1),
+        'data-si': String(i), title: '自定义填充色',
+        'data-f': 'fill'
+      });
+      row.appendChild(pickFill);
+
+      /* 饼图只剩一个系列时也不给删除 —— 删空了这个控件就没意义了 */
+      if (!isPie || d.series.length > 1) {
+        row.appendChild(el('button', {
+          class: 'icon-btn chart-del', type: 'button', id: 'chf-d' + i,
+          title: '删除这个系列', 'data-si': String(i), text: '✕'
+        }));
+      }
+      return row;
     });
+    host.innerHTML = '';
+    rows.forEach(function (r) { host.appendChild(r); });
+  }
+
+  /* ── 数据网格：行 = 分类，列 = 系列 ──
+     以前是「一个输入框里塞一串逗号分隔的数值」。改成网格之后：
+       · 每个数一个格子，改第 3 个数不用先在长串里数逗号；
+       · 表头就是系列名，与上面「系列」段一一对应；
+       · 分类名也在行首可编辑（原来是一个单独的分类输入框）。 */
+  function renderChartGrid(d) {
+    var host = $('chf-grid');
+    if (!host) return;
+    var n = d.series.length;
+    /* 列宽：分类列弹性、每个系列列等宽、末列放删除。
+       系列多的时候整块横向滚动（外面那层 overflow 见 CSS）。 */
+    host.style.gridTemplateColumns = 'minmax(64px, 1fr) repeat(' + n + ', minmax(54px, 78px)) 22px';
+    host.innerHTML = '';
+
+    host.appendChild(el('div', { class: 'chart-grid-corner' }));
+    d.series.forEach(function (s, si) {
+      host.appendChild(el('div', {
+        class: 'chart-grid-head', text: s.name || ('系列' + (si + 1)), title: s.name || ''
+      }));
+    });
+    host.appendChild(el('div'));
+
+    d.labels.forEach(function (lb, ri) {
+      var key = el('input', {
+        class: 'input grid-key', id: 'chf-cat' + ri, value: lb,
+        'data-ri': String(ri), 'data-f': 'label', title: '分类名称'
+      });
+      host.appendChild(key);
+      d.series.forEach(function (s, si) {
+        var v = el('input', {
+          class: 'input grid-val', id: 'chf-v' + ri + '_' + si, inputmode: 'decimal',
+          value: s.data[ri] == null ? '' : String(s.data[ri]),
+          'data-ri': String(ri), 'data-si': String(si), 'data-f': 'value',
+          title: (s.name || '') + ' · ' + lb
+        });
+        host.appendChild(v);
+      });
+      host.appendChild(el('button', {
+        class: 'icon-btn chart-del', type: 'button', id: 'chf-rd' + ri,
+        'data-ri': String(ri), title: '删除这一行（分类）', text: '✕'
+      }));
+    });
+  }
+
+  /* ── 背景色 ──
+     第一个色块是「无」（透明，斜线示意），后面是常用底色 + 一个自定义取色。
+     默认无 —— 课件底板常见深色/渐变，烤成白底会变成一张贴上去的白纸。 */
+  function renderChartBg(d) {
+    var host = $('chf-bg');
+    if (!host) return;
+    host.innerHTML = '';
+    var cur = d.bgColor || '';
+    var none = el('button', {
+      class: 'sw sw-none' + (cur ? '' : ' active'), type: 'button',
+      id: 'chf-bg-none', title: '无背景（透明）'
+    });
+    host.appendChild(none);
+    WD.elements.chartBackgrounds().forEach(function (c, i) {
+      var b = el('button', {
+        class: 'sw sw-bg' + (c === cur ? ' active' : ''), type: 'button',
+        id: 'chf-bg' + i, 'data-color': c, title: '背景色：' + c
+      });
+      b.style.background = c;
+      host.appendChild(b);
+    });
+    var pick = el('button', {
+      class: 'sw sw-custom' + (cur && WD.elements.chartBackgrounds().indexOf(cur) < 0 ? ' active' : ''),
+      type: 'button', id: 'chf-bg-pick', title: '自定义背景色'
+    });
+    chartCustomBg = cur;
+    if (cur && WD.elements.chartBackgrounds().indexOf(cur) < 0) pick.style.background = cur;
+    host.appendChild(pick);
+  }
+
+  /* ── 系列 / 分类的增删 ──
+     这几种是**结构改动**，不能等 0.4 秒防抖：用户点了「＋ 添加系列」却半天没反应，
+     只会以为按钮坏了。所以它们统一走 applyChartPanelNow()，并且先把面板当前值读回来
+     （否则刚改的名字会被上一次画图的数据覆盖）。 */
+  function chartAddSeries() {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (info.kind === 'pie') { toast('饼图只能有一个系列', 'warn'); return; }
+    var list = liveChartSeries(info).map(function (s) { return s; });
+    var pal = WD.elements.chartPalette();
+    list.push({ name: '系列' + (list.length + 1), color: pal[list.length % pal.length], data: [] });
+    /* 新系列先补满分类数，否则网格里这一列是空的、图上也没柱子 */
+    var nCat = $$('#chf-grid .grid-key').length || info.d.labels.length;
+    var last = list[list.length - 1];
+    while (last.data.length < nCat) last.data.push(0);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: currentPanelLabels(info), series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartRemoveSeries(si) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (info.kind === 'pie' || (info.d.series || []).length <= 1) {
+      toast('至少要保留一个系列', 'warn');
+      return;
+    }
+    var list = liveChartSeries(info);
+    if (!(si >= 0) || si >= list.length) return;
+    list.splice(si, 1);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: currentPanelLabels(info), series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartAddCategory() {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var list = liveChartSeries(info);
+    list.forEach(function (s) { s.data.push(0); });
+    var labels = currentPanelLabels(info).concat(['分类' + (currentPanelLabels(info).length + 1)]);
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: labels, series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  function chartRemoveCategory(ri) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var labels = currentPanelLabels(info);
+    if (labels.length <= 1) { toast('至少要保留一个分类', 'warn'); return; }
+    labels.splice(ri, 1);
+    var list = liveChartSeries(info);
+    list.forEach(function (s) { s.data.splice(ri, 1); });
+    chartPanelSig = '';
+    renderChartSeries({ kind: info.kind, series: list, seriesKind: list.map(function () { return 'bar'; }) });
+    renderChartGrid({ labels: labels, series: list, seriesKind: [] });
+    applyChartPanelNow();
+  }
+
+  /* 面板里当前的分类名（用户可能刚改过行首，还没重画） */
+  function currentPanelLabels(info) {
+    var keys = $$('#chf-grid .grid-key');
+    if (!keys.length) return (info.d.labels || []).slice();
+    return keys.map(function (k, i) {
+      var v = String(k.value == null ? '' : k.value).trim();
+      return v || ('分类' + (i + 1));
+    });
+  }
+
+  /* 背景色：'' = 无（透明） */
+  function chartSetBg(color) {
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var d = JSON.parse(JSON.stringify(info.d));
+    d.bgColor = color || '';
+    chartCustomBg = d.bgColor;
+    repaintChart(info.img, d, info.kind);
+    commit('修改图表背景色');
+    chartPanelSig = '';
+    renderChartPanel(selected());
+  }
+
+  /* 把一枚平时隐藏的 <input type=color> 临时"停"到目标元素正上方再点它。
+     原生色盘是贴着这个 input 自己的矩形弹出的：input 藏在文档末尾 / display:none
+     时，色盘会弹到左上角或屏幕外，用户点「＋」却在别处弹出 —— 就是"着色器偏移"。
+     把它定位到 anchor 的实际屏幕位置，色盘就正好从"＋"那里长出来。 */
+  function openColorPickerAt(input, anchorEl, hex, onPick) {
+    if (!input || !anchorEl) return;
+    /* 有的取色 input 平时挂着 hidden / display:none（如 #chart-bg-input），
+       那样它没有布局盒、.click() 也弹不出色盘。先让它可布局再定位。 */
+    input.hidden = false;
+    input.style.display = '';
+    var r = anchorEl.getBoundingClientRect();
+    input.style.position = 'fixed';
+    input.style.left = Math.max(0, Math.round(r.left)) + 'px';
+    input.style.top = Math.max(0, Math.round(r.top)) + 'px';
+    input.style.width = Math.max(1, Math.round(r.width)) + 'px';
+    input.style.height = Math.max(1, Math.round(r.height)) + 'px';
+    input.style.margin = '0';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
+    /* 不要设 z-index:-1：Chrome 会把它当成被遮挡的元素、退回默认锚点，
+       色盘就又弹回文档末尾（左下角）了。 */
+    var m = /^#?([0-9a-fA-F]{6})$/.exec(hex || '');
+    input.value = m ? '#' + m[1] : '#000000';
+    /* 关键：强制一次同步回流，把上面改的 fixed 坐标真正落到布局里。
+       原生色盘是**贴着 input 当前的布局矩形**弹出的；不 flush 就还是旧位置
+       （文档末尾、左下角），点「＋」色盘却从别处冒出来 —— 就是"偏差过大"。 */
+    void input.offsetWidth;
+    var done = false;
+    function restore() {
+      if (done) return; done = true;
+      input.onchange = null;
+      /* 用完立刻藏回去，免得这枚透明 input 长期挂在屏幕上占层 */
+      input.style.display = 'none';
+      input.hidden = true;
+    }
+    input.onchange = function () {
+      var v = input.value;
+      restore();
+      if (onPick) onPick(v);
+    };
+    input.click();
+    /* 极少数浏览器取消选择时不派发 change：兜底把它藏回去（色盘关闭后触发） */
+    input.addEventListener('blur', restore, { once: true });
+  }
+
+  function chartPickBg(anchor) {
+    var input = $('chart-bg-input');
+    if (!input) return;
+    var cur = currentChartBg() || '#ffffff';
+    openColorPickerAt(input, anchor || input, cur, function (hex) {
+      chartSetBg(hex || '');
+    });
+  }
+
+  /* 从右栏读回一份图表数据；分类为空则返回 null（不覆盖图上已有的）。
+     改动点：分类名与数值都从网格读，系列的画法也逐行读。 */
+  function readChartPanel(info, series) {
+    series = series || info.d.series;
+    /* 分类行数由网格决定（网格是「分类 × 系列」的真源） */
+    var keyEls = $$('#chf-grid .grid-key');
+    if (!keyEls.length) return null;
+    var labels = [];
+    keyEls.forEach(function (k) {
+      var v = String(k.value == null ? '' : k.value).trim();
+      labels.push(v || ('分类' + (labels.length + 1)));
+    });
+
+    var valEls = $$('#chf-grid .grid-val');
+    var data = series.map(function () { return []; });
+    valEls.forEach(function (v) {
+      var ri = parseInt(v.getAttribute('data-ri'), 10);
+      var si = parseInt(v.getAttribute('data-si'), 10);
+      if (!(ri >= 0) || !(si >= 0) || !data[si]) return;
+      data[si][ri] = v.value;
+    });
+
+    /* 系列行可能被删过（编号会跳），所以按行重新收集而不是按下标对齐 */
+    var rowEls = $$('#chf-series .series-row');
+    var out = rowEls.map(function (row, i) {
+      var si = parseInt(row.getAttribute('data-si'), 10);
+      if (!(si >= 0)) si = i;
+      var nameEl = row.querySelector('[data-f="name"]');
+      var kindEl = row.querySelector('[data-f="kind"]');
+      var swStroke = row.querySelector('.sw-series[data-f="stroke"]');
+      var swFill = row.querySelector('.sw-series[data-f="fill"]');
+      var old = series[si] || {};
+      var pal = WD.elements.chartPalette();
+      return {
+        name: ((nameEl || {}).value || '').trim() || old.name || ('系列' + (i + 1)),
+        color: (swStroke && swStroke.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        fillColor: (swFill && swFill.getAttribute('data-color')) || old.fillColor || (swStroke && swStroke.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        kind: kindEl ? kindEl.value : (old.kind || 'bar'),
+        data: data[si] || old.data || [],
+      };
+    });
+    if (!out.length) return null;
+
+    /* seriesKind 单独存一条平行数组：绘制层只关心「第 i 个系列怎么画」 */
+    var kinds = out.map(function (s) { return s.kind === 'chartline' ? 'chartline' : 'bar'; });
+    /* 整个图表的画法由系列决定：全是折线就是折线图，否则按柱/线混合画 */
+    var allLine = kinds.length > 0 && kinds.every(function (k) { return k === 'chartline'; });
+    var kind = info.kind === 'pie' ? 'pie' : (allLine ? 'chartline' : 'bar');
+
+    return {
+      kind: kind,
+      title: (($('chf-title') || {}).value || '').trim(),
+      labels: labels,
+      series: out.map(function (s) { return { name: s.name, color: s.color, fillColor: s.fillColor, data: s.data }; }),
+      seriesKind: kinds,
+      bgColor: currentChartBg(),
+      showLegend: !!($('chf-legend') || {}).checked,
+      showValues: !!($('chf-values') || {}).checked,
+    };
+  }
+
+  function currentChartBg() {
+    var on = $('#chf-bg .sw-bg.active');
+    if (on) return on.getAttribute('data-color') || '';
+    /* 自定义色：色板里没有它，所以那一格 active 时用挂着的值 */
+    if ($('#chf-bg .sw-custom.active')) return chartCustomBg || '';
+    return '';
+  }
+
+  /* 系列结构变了但还没走防抖重画时，读回来的数据要基于**当前面板**里的系列，
+     否则「加一个系列」会被上一版数据覆盖掉。 */
+  function liveChartSeries(info) {
+    var d = info.d;
+    var rowEls = $$('#chf-series .series-row');
+    if (!rowEls.length) return d.series;
+    var pal = WD.elements.chartPalette();
+    return rowEls.map(function (row, i) {
+      var si = parseInt(row.getAttribute('data-si'), 10);
+      var old = (si >= 0 && d.series[si]) ? d.series[si] : (d.series[i] || {});
+      var sw = row.querySelector('.sw-series');
+      return {
+        name: ((row.querySelector('[data-f="name"]') || {}).value || '').trim() || old.name || ('系列' + (i + 1)),
+        color: (sw && sw.getAttribute('data-color')) || old.color || pal[i % pal.length],
+        data: old.data || [],
+      };
+    });
+  }
+
+  /* 立刻把当前面板写回图表（不防抖）。加/删系列与分类这种结构改动走它：
+     结构变了却等 400ms 才重画，用户会以为按钮没反应。 */
+  /* 立刻把当前面板写回图表（不防抖）。加/删系列与分类、换颜色、换类型
+     这种**结构/样式**改动走它：结构变了却等 400ms 才重画，用户会以为按钮坏了。
+     skipRender = true 时**不重建面板**：系列下拉这种**就地改值**的控件已经在
+     新值上，再重建一次反而会让「连续改两个系列类型」时第二次点不到第二个 select ——
+     第一次的 change 事件触发了重建，第二次循环时第二个 select 已经不是原来那个节点。 */
+  function applyChartPanelNow(skipRender) {
+    if (chartLiveTimer) { clearTimeout(chartLiveTimer); chartLiveTimer = null; }
+    var info = chartDataOf(selected());
+    if (!info) return;
+    var next = readChartPanel(info, liveChartSeries(info));
+    if (!next) { toast('至少要有一个分类', 'warn'); return; }
+    repaintChart(info.img, next, next.kind);
+    /* 类型改了 → data-wd-chart-kind 也要跟着变，否则下次进这段又读回旧类型。
+       加/删系列 → 网格与系列行数量变了，**必须**重建面板（否则下拉 / 网格还停在旧版）。 */
+    var kindChanged = next.kind !== info.kind;
+    if (skipRender && !kindChanged) return;
+    commit('修改图表数据');
+    chartPanelSig = '';
+    renderChartPanel(selected());
+  }
+
+  /* 输入停手 CHART_LIVE_MS 就重画。取 400ms：短了会在「输 1、输 0」之间
+     就去画一次，白烧一次 canvas + dataURL；长了又不像「即时生效」。 */
+  var CHART_LIVE_MS = 400;
+  var chartLiveTimer = null;
+
+  function scheduleChartLive() {
+    var sec = $('sec-chart');
+    if (!sec || sec.hidden) return;
+    var info = chartDataOf(selected());
+    if (!info) return;
+    if (chartLiveTimer) clearTimeout(chartLiveTimer);
+    chartLiveTimer = setTimeout(function () {
+      chartLiveTimer = null;
+      var cur = chartDataOf(selected());
+      if (!cur) return;
+      var next = readChartPanel(cur);
+      if (!next) { toast('至少要有一个分类，图表数据没有改动', 'warn'); return; }
+      var switched = next.kind && next.kind !== cur.kind;
+      repaintChart(cur.img, next, next.kind);
+      commit(switched ? '切换图表类型' : '修改图表数据');
+      /* 用归一化后的数据回填输入框：比如用户多打了一个逗号、空格，
+         normalize 之后已经清掉了，输入框里不该继续留着那些多余符号。
+         renderChartPanel 会把焦点和光标还回去，打字不会被这段回填打断。 */
+      renderChartPanel(selected());
+    }, CHART_LIVE_MS);
+  }
+
+  /* 双击图表：不再弹框，而是把右栏那段唤到眼前（滚过去 + 闪一下 + 聚焦标题框）。
+     用户的肌肉记忆是「双击 = 编辑这张图」，这里只是换了个不挡画布的落点。 */
+  function focusChartPanel() {
+    var sec = $('sec-chart');
+    if (!sec || sec.hidden) return;
+    if (sec.scrollIntoView) sec.scrollIntoView({ block: 'nearest' });
+    sec.classList.remove('flash');
+    void sec.offsetWidth;          /* 强制回流，让动画能重放 */
+    sec.classList.add('flash');
+    var first = $('chf-title');
+    if (first) first.focus();
   }
 
   /* 插入图片：文件 → dataURL → 直接写进画布 */
@@ -7419,6 +8768,23 @@ body.dragging-file::after {
     P: '¶', UL: '≣', OL: '≣', TABLE: '▦', HR: '─', BUTTON: '▰', SPAN: '▰',
   };
 
+  /* 自插元素用自己的图标（与形状下拉里那一套一致），
+     否则图层面板里笔迹、多边形、曲线全是同一个「▢」，只能靠文字分辨。 */
+  var ADDED_ICONS = {
+    drawn: '✎', poly: '⬡', curve: '◜', connector: '⌐', connectorcurve: '∿',
+    line: '╱', arrow: '⟶', dblarrow: '⟷',
+    rect: '▭', round: '▢', circle: '◯', oval: '⬭', triangle: '△', para: '▱',
+    table: '▦', formula: '√x', image: '▣', video: '▶',
+    bar: '▊', chartline: '⟋', pie: '◔',
+  };
+
+  function layerIcon(node) {
+    var added = node.getAttribute && node.getAttribute('data-wd-added');
+    if (added && ADDED_ICONS[added]) return ADDED_ICONS[added];
+    if (node.getAttribute && node.getAttribute('data-wd-chart-kind')) return '▊';
+    return LAYER_ICONS[node.tagName] || '▢';
+  }
+
   /* 按绘制顺序（先 DOM 后 z-index）列出画布的直接子元素 */
   function layerNodes() {
     var root = rootEl();
@@ -7437,7 +8803,28 @@ body.dragging-file::after {
       .map(function (x) { return x.node; });
   }
 
+  /* 插入的元素优先报它自己的名字。
+     自由绘制 / 多边形 / 曲线 / 连接线这些是空 div（没有文字），
+     原来一律落到 map 里显示成「容器」—— 图层面板里一整列「容器」，
+     根本分不出哪行是笔迹、哪行是多边形。 */
+  var ADDED_LABELS = {
+    drawn: '自由绘制', poly: '多边形',
+    curve: '曲线', connector: '连接线', connectorcurve: '曲线连接线',
+    line: '直线', arrow: '箭头', dblarrow: '双向箭头',
+    rect: '矩形', round: '圆角矩形', circle: '圆形', oval: '椭圆',
+    triangle: '三角形', para: '平行四边形',
+    table: '表格', formula: '公式',
+    bar: '柱状图', chartline: '折线图', pie: '饼状图',
+    image: '图片', video: '视频',
+    text: '文本框', textv: '竖向文本框',
+    title1: '一级标题', title2: '二级标题', title3: '三级标题', title4: '四级标题',
+  };
+
   function layerLabel(node) {
+    var added = node.getAttribute && node.getAttribute('data-wd-added');
+    if (added && ADDED_LABELS[added]) return ADDED_LABELS[added];
+    var chart = node.getAttribute && node.getAttribute('data-wd-chart-kind');
+    if (chart) return ({ bar: '柱状图', chartline: '折线图', pie: '饼状图' })[chart] || '图表';
     var txt = (node.textContent || '').replace(/\s+/g, ' ').trim();
     if (txt) return txt.slice(0, 22);
     var tag = node.tagName;
@@ -7462,7 +8849,7 @@ body.dragging-file::after {
         draggable: 'true',
         title: layerLabel(n),
       });
-      row.appendChild(el('span', { class: 'layer-ico', text: LAYER_ICONS[n.tagName] || '▢' }));
+      row.appendChild(el('span', { class: 'layer-ico', text: layerIcon(n) }));
       row.appendChild(el('span', { class: 'layer-name', text: layerLabel(n) }));
 
       var lockBtn = el('button', {
@@ -8093,7 +9480,7 @@ body.dragging-file::after {
       box,
       el('span', { class: 'rail-num', text: String(i + 1) }),
       el('div', { class: 'rail-actions' }, [
-        el('button', { class: 'mini-btn', title: '复制此页', text: '⧉', onclick: function (ev) { ev.stopPropagation(); store.duplicateSlide(i); goSlide(store.current); } }),
+        el('button', { class: 'mini-btn', title: '复制此页', text: '⧉', onclick: function (ev) { ev.stopPropagation(); duplicateSlide(i); } }),
         el('button', { class: 'mini-btn', title: '删除此页', text: '✕', onclick: function (ev) { ev.stopPropagation(); doDeleteSlide(i); } })
       ])
     ]);
@@ -8199,6 +9586,12 @@ body.dragging-file::after {
     var token = ++loadingToken;
     clearSelection();
     E.editing = null;
+    /* 换页即退出绘制态。
+       绘制工具是挂在**帧文档**上的，切页会整份换掉帧文档：
+       工具留着的话，用户在新的一页上随手一拖就会画出一条谁也没想要的笔迹
+       （而且此时提示与十字光标都不在，没有任何「还在绘制态」的反馈）。
+       宁可他再点一次菜单，也不要留下一个看不见的、会吃掉拖拽的模式。 */
+    if (global.WD && global.WD.drawTool) global.WD.drawTool.stop();
     /* 有内容时要收起空状态遮罩，否则它盖在舞台上方 */
     $('stage-empty').hidden = true;
     /* 底部状态条的「放映」按钮同理：没有文档可放映时不出现 */
@@ -8258,9 +9651,18 @@ body.dragging-file::after {
     doc.addEventListener('pointercancel', function () {
       if (marqueeState) onMarqueeEnd();
     }, true);
+    /* 右键菜单：**必须在帧内监听**。
+       右键 MenuContext 不跨文档冒泡 —— 在帧内派发的 contextmenu 到不了父页的
+       #stage-frame（实测 stage-frame / document 上的监听计数都是 0），
+       所以画布上的右键只有这里收得到；父页那个监听只管帧外那一圈留白。
+       坐标这里已经是**帧内坐标**（帧视口≈1920×1080 画布），正好就是 pickAt
+       与 doc.elementFromPoint 认的那一套，不需要再换算。
+       菜单本身仍按父页坐标定位：帧内坐标点 × scale + stageRect 即父页 client 坐标。 */
     doc.addEventListener('contextmenu', function (ev) {
+      var loc = frameToClient(ev.clientX, ev.clientY);
+      if (!loc) return;                 /* 舞台未就绪：保持浏览器默认菜单 */
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY);
+      openCanvasContextMenu(pickAt(ev.clientX, ev.clientY), loc);
     }, true);
     /* 阻止帧内链接跳转 */
     doc.addEventListener('click', function (ev) {
@@ -8288,6 +9690,10 @@ body.dragging-file::after {
 
   function onFramePointerDown(ev) {
     if (ev.button !== 0) return;
+    /* 绘制态下整条画布事件归 WD.drawTool 管：选区不要动、框选不要起、
+       拖动更不要开始 —— 这里和 capture 阶段抢在 drawTool 之前，
+       早 return 才不会把绘制吞掉。 */
+    if (global.WD && global.WD.drawTool && global.WD.drawTool.active()) return;
     var doc = frameDoc();
     if (E.editing && E.editing.contains(ev.target)) return;
 
@@ -8330,6 +9736,10 @@ body.dragging-file::after {
 
   function onFramePointerMove(ev) {
     if (E.drag || E.editing) return;
+    /* 绘制态下光标由 WD.drawTool 固定成十字线：
+       这段是「悬停反馈」，它按命中结果改写 body.cursor，
+       会把绘制光标覆盖掉（悬停到文字上就变 I 形，看起来像没进绘制态）。 */
+    if (global.WD && global.WD.drawTool && global.WD.drawTool.active()) return;
     var doc = frameDoc();
     if (!doc) return;
     var hit = pickAt(ev.clientX, ev.clientY);
@@ -8379,10 +9789,20 @@ body.dragging-file::after {
     ev.preventDefault();
     ev.stopPropagation();
 
-    /* 图表：双击是「改数据」，不是「改字」 */
+    /* 图表：双击是「去右栏改数据」，不是弹框。
+       选区一变，右栏那段就渲染好；双击只负责把它唤到眼前。 */
     if (hit.hasAttribute && hit.hasAttribute('data-wd-chart')) {
       setSelection([hit]);
-      openChartDialog(hit);
+      focusChartPanel();
+      return;
+    }
+
+    /* 公式：双击直接打开 LaTeX 编辑弹窗（带上当前源码）。
+       公式的「内容」是 LaTeX 源（存在 data-wd-latex），不是 DOM textContent —
+       走 textBlockFor 会卡在空的 MathML 上什么也改不了。 */
+    if (hit.getAttribute && hit.getAttribute('data-wd-added') === 'formula') {
+      setSelection([hit]);
+      openLatexDialog(hit.getAttribute('data-wd-latex') || '', hit);
       return;
     }
 
@@ -8482,6 +9902,18 @@ body.dragging-file::after {
       }
       host.appendChild(b);
     });
+    /* 色板只给「常用的那些」，真要任意色还是得开色盘。
+       这里复用检查器那个「填充」原生取色器（#f-fill）：点它等于点填充色格，
+       input/change 已经有整套落样式 + 撤销的处理，颜色真源只有一处。 */
+    var custom = el('button', {
+      class: 'swatch swatch-pick', title: '自定义颜色…（开色盘）',
+      onclick: function () {
+        var pick = $('f-fill');
+        if (pick) pick.click();
+      }
+    });
+    custom.textContent = '+';
+    host.appendChild(custom);
   }
 
   function initFontOptions() {
@@ -8514,6 +9946,9 @@ body.dragging-file::after {
 
   function updateInspector() {
     var hasModel = !!store.model;
+    var wasSlide = $('sec-slide').hidden;
+    var wasEl = $('sec-element').hidden;
+    var wasChart = $('sec-chart').hidden;
     $('sec-slide').hidden = !hasModel;
     var hasSel = E.selection.length > 0 && !E.editing;
     $('sec-element').hidden = !hasSel;
@@ -8521,6 +9956,12 @@ body.dragging-file::after {
     $('insp-title').textContent = hasSel ? '元素属性' : '幻灯片属性';
     updateCtxBar(hasModel, hasSel);
     updateFormatBar();
+
+    /* 分区「刚刚变为相关」时自动展开：选中元素就把元素段摊开，切到页面就把页面段摊开。
+       已经相关的不重复展开（否则每次刷新都会覆盖用户的手动收起）。
+       图层段永远相关，所以这里不碰它。 */
+    if (wasSlide && hasModel) autoExpandSection('sec-slide');
+    if (wasEl && hasSel) autoExpandSection('sec-element');
 
     /* 幻灯片区 */
     if (hasModel) {
@@ -8540,6 +9981,26 @@ body.dragging-file::after {
     }
 
     if (hasSel) updateInspectorValues();
+    /* 公式专属段：选中公式才显示。`f-formula-row` 的 hidden 跟着节点类型走，
+       不走 sec-element 那一套「业务显隐」—— 公式段落要的是子切换，不是
+       整个元素段切走。 */
+    var node = hasSel ? selected() : null;
+    var fRow = $('f-formula-row');
+    if (fRow) {
+      fRow.hidden = !(node && node.getAttribute('data-wd-added') === 'formula');
+      if (node && node.getAttribute('data-wd-added') === 'formula') {
+        if (document.activeElement !== $('f-formula-src')) {
+          $('f-formula-src').value = node.getAttribute('data-wd-latex') || '';
+        }
+      }
+    }
+    /* 图表数据段：选中的不是图表就整段隐藏（renderChartPanel 负责 hidden 与内容）。
+       必须放在 updateInspectorValues 之后 —— 它要把 sec-chart 的 hidden 状态
+       纳入同一轮刷新，否则取消选中时这段会留在右栏上。 */
+    renderChartPanel(hasSel ? selected() : null);
+    /* 图表段同理：选中图表时它才刚变相关，这时替用户摊开一次。
+       要放在 renderChartPanel 之后 —— 那一步才把 sec-chart 设为可见。 */
+    if (wasChart && !$('sec-chart').hidden) autoExpandSection('sec-chart');
     updateHistoryButtons();
   }
 
@@ -8611,11 +10072,35 @@ body.dragging-file::after {
     var radius = U.parsePx(cs.borderTopLeftRadius, 0) || 0;
     if (document.activeElement !== $('f-radius')) $('f-radius').value = Math.round(radius);
 
-    setColorField('fill', U.parseColor(cs.backgroundColor), cs.backgroundImage);
+    /* 线条类的颜色/粗细真源在 data-wd-stroke / data-wd-w（见 setStyleSmart），
+       CSS 盒子恒为透明 —— 直接读 computed style 会永远显示「透明 / 0」，
+       检查器就没法回显用户选过的颜色与粗细。 */
+    var isLineShape = WD.elements.isLineKind && WD.elements.isLineKind(node.getAttribute('data-wd-added'));
+    if (isLineShape) {
+      var lineStroke = node.getAttribute('data-wd-stroke') || U.parseColor(cs.backgroundColor);
+      setColorField('fill', lineStroke ? (typeof lineStroke === 'string' ? U.parseColor(lineStroke) : lineStroke) : null);
+      if (document.activeElement !== $('f-border-w')) {
+        $('f-border-w').value = parseFloat(node.getAttribute('data-wd-w')) || U.parsePx(cs.borderTopWidth, 0) || 0;
+      }
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = 'solid';
+    } else if (node.getAttribute('data-wd-added') === 'poly') {
+      /* 多边形：填充=data-wd-fill，描边色=data-wd-stroke，粗细=data-wd-w。
+         盒子恒透明，读 computed style 全是透明，必须回到这些属性上回显。 */
+      var polyFill = node.getAttribute('data-wd-fill');
+      setColorField('fill', polyFill ? U.parseColor(polyFill) : null);
+      var polyStroke = node.getAttribute('data-wd-stroke');
+      setColorField('border-color', polyStroke ? U.parseColor(polyStroke) : null);
+      if (document.activeElement !== $('f-border-w')) {
+        $('f-border-w').value = parseFloat(node.getAttribute('data-wd-w')) || 0;
+      }
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = 'solid';
+    } else {
+      setColorField('fill', U.parseColor(cs.backgroundColor), cs.backgroundImage);
+      setColorField('border-color', U.parseColor(cs.borderTopColor));
+      if (document.activeElement !== $('f-border-w')) $('f-border-w').value = U.parsePx(cs.borderTopWidth, 0) || 0;
+      if (document.activeElement !== $('f-border-style')) $('f-border-style').value = cs.borderTopStyle === 'none' ? 'none' : cs.borderTopStyle;
+    }
     setColorField('color', U.parseColor(cs.color));
-    setColorField('border-color', U.parseColor(cs.borderTopColor));
-    if (document.activeElement !== $('f-border-w')) $('f-border-w').value = U.parsePx(cs.borderTopWidth, 0) || 0;
-    if (document.activeElement !== $('f-border-style')) $('f-border-style').value = cs.borderTopStyle === 'none' ? 'none' : cs.borderTopStyle;
 
     var fam = U.primaryFamily(cs.fontFamily);
     var fsel = $('f-font');
@@ -8727,6 +10212,46 @@ body.dragging-file::after {
 
   function setStyleSmart(node, prop, value) {
     prop = toCssProp(prop);
+    /* 线条类（line / arrow / dblarrow / curve / connector / connectorcurve）的
+       「颜色 / 粗细」翻译到 data-wd-stroke / data-wd-w 上，不写 CSS 盒子：
+       它们的盒子必须保持透明（图形是里面的 SVG 画的），而 syncLine 每帧都会
+       把盒子刷成透明 —— 颜色若存在 background-color 上就会被那一步抹掉，
+       表现为「改完颜色，再点一下画布就弹回默认蓝」。
+       在这里统一翻译，检查器 / 格式刷 / 快捷色板所有入口一次覆盖。 */
+    if (WD.elements.isLineKind && WD.elements.isLineKind(node.getAttribute('data-wd-added'))) {
+      if (prop === 'background-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-stroke');
+        else node.setAttribute('data-wd-stroke', value);
+        return;
+      }
+      if (prop === 'border-width' || prop === 'border-top-width') {
+        var wpx = parseFloat(value);
+        if (value === '' || value === null || !(wpx > 0)) node.removeAttribute('data-wd-w');
+        else node.setAttribute('data-wd-w', String(wpx));
+        return;
+      }
+    }
+    /* 多边形（poly）是**闭合**描边图形：盒子恒透明（syncLine 会抹掉 CSS 底色），
+       所以「填充」的真源是 data-wd-fill、「描边颜色」是 data-wd-stroke、「粗细」是
+       data-wd-w —— 都在这里翻译，检查器 / 色板 / 格式刷所有入口一次覆盖。 */
+    if (node.getAttribute('data-wd-added') === 'poly') {
+      if (prop === 'background-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-fill');
+        else node.setAttribute('data-wd-fill', value);
+        return;
+      }
+      if (prop === 'border-color' || prop === 'border-top-color') {
+        if (value === '' || value === null) node.removeAttribute('data-wd-stroke');
+        else node.setAttribute('data-wd-stroke', value);
+        return;
+      }
+      if (prop === 'border-width' || prop === 'border-top-width') {
+        var pw = parseFloat(value);
+        if (value === '' || value === null || !(pw > 0)) node.removeAttribute('data-wd-w');
+        else node.setAttribute('data-wd-w', String(pw));
+        return;
+      }
+    }
     var style = node.style;
     var shorthands = SHORTHAND_FOR[prop];
     if (shorthands && shorthands.length) {
@@ -8983,6 +10508,38 @@ body.dragging-file::after {
     /* 自定义 CSS */
     $('btn-css-apply').addEventListener('click', applyCustomCss);
 
+    /* 公式专属：在右栏里直接改 LaTeX 源（input 走防抖，弹窗版立即更新） */
+    var fSrc = $('f-formula-src');
+    if (fSrc) {
+      var fTimer = null;
+      fSrc.addEventListener('input', function () {
+        var n = selected();
+        if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+        var src = fSrc.value;
+        clearTimeout(fTimer);
+        fTimer = setTimeout(function () { updateFormula(n, src); }, 350);
+      });
+    }
+    var fEdit = $('f-formula-edit');
+    if (fEdit) fEdit.addEventListener('click', function () {
+      var n = selected();
+      if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+      openLatexDialog(n.getAttribute('data-wd-latex') || '', n);
+    });
+    var fReset = $('f-formula-reset');
+    if (fReset) fReset.addEventListener('click', function () {
+      var n = selected();
+      if (!n || n.getAttribute('data-wd-added') !== 'formula') return;
+      /* 公式本身是 absolute 定位的，把它「重置回默认」 = 居中 560×120
+         （与 insertFormula 的初始尺寸一致），不涉及 LaTeX 改写。 */
+      var s = frameDoc().defaultView.getComputedStyle(n);
+      n.style.left = (parseInt(s.left, 10) || 0) + 'px';
+      n.style.top = (parseInt(s.top, 10) || 0) + 'px';
+      n.style.width = '560px';
+      n.style.height = '120px';
+      refreshOverlay();
+    });
+
     /* 幻灯片属性 */
     $('f-notes').addEventListener('change', function () { store.setNotes(this.value); });
     $('f-notes').addEventListener('blur', function () { store.setNotes(this.value); });
@@ -9004,7 +10561,7 @@ body.dragging-file::after {
       else setSlideBackground(v, true);
     });
 
-    $('btn-slide-dup').addEventListener('click', function () { store.duplicateSlide(store.current); goSlide(store.current); });
+    $('btn-slide-dup').addEventListener('click', function () { duplicateSlide(store.current); });
     $('btn-slide-del').addEventListener('click', function () { doDeleteSlide(store.current); });
     $('btn-slide-up').addEventListener('click', function () { store.moveSlide(store.current, store.current - 1); goSlide(store.current); });
     $('btn-slide-down').addEventListener('click', function () { store.moveSlide(store.current, store.current + 1); goSlide(store.current); });
@@ -9409,6 +10966,14 @@ body.dragging-file::after {
       toast('工程文件解析失败，改为按普通 HTML 解析', 'warn');
     }
 
+    /* 早期放映页：没有工程区块，但页数据在脚本里，先展开再走正常流程 */
+    var legacy = WD.parse.parseLegacyViewer(text);
+    if (legacy) {
+      adoptDeck(legacy, fileName);
+      toast('已按放映页兼容展开为 ' + legacy.slides.length + ' 页', 'ok', 4200);
+      return;
+    }
+
     busy('正在解析 HTML…', '定位幻灯片…');
     var t0 = performance.now();
     WD.parse.loadHtml(text, {
@@ -9459,30 +11024,113 @@ body.dragging-file::after {
     flushNudgeCommit();          /* 待办的微调先落库，否则存出去的是旧状态 */
     syncSlideDoc();
     var html = WD.parse.serializeProject(store.model);
-    U.downloadText(html, U.safeFileName(store.fileName || store.model.title, 'wizdeck') + '.wd.html', 'text/html');
-    store.setDirty(false);
-    updateHistoryButtons();
-    toast('工程已保存（.wd.html，可再次打开继续编辑）', 'ok', 4200);
+    try {
+      localStorage.setItem('wizdeck.model', html);
+      store.setDirty(false);
+      updateHistoryButtons();
+      var kb = (html.length / 1024).toFixed(1);
+      toast('已保存到浏览器（' + kb + ' KB）', 'ok', 3000);
+    } catch (e) {
+      /* QuotaExceededError / SecurityError：常见于隐身模式或被禁用 */
+      toast('保存失败：浏览器本地存储不可用（' + (e && e.name ? e.name : '未知错误') + '）', 'error', 6000);
+    }
   }
 
+  /* 导出为 HTML（工程文件）：WizDeck 原生 .wd.html —— 带 wizdeck-doc 工程区块，
+     用浏览器打开也能方向键翻页，但排版从简；要在 WizDeck 里继续编辑选这个最稳。 */
+  function saveProjectFile() {
+    if (!store.model) { toast('还没有可导出的内容', 'warn'); return; }
+    flushNudgeCommit();
+    syncSlideDoc();
+    var name = U.safeFileName(store.fileName || store.model.title, 'wizdeck');
+    U.downloadText(WD.parse.serializeProject(store.model), name + '.wd.html', 'text/html');
+    toast('已导出工程文件（.wd.html，可再次打开继续编辑）', 'ok', 4200);
+  }
+
+  /* 导出为 HTML：产出一个自包含的单文件放映页 —— 每页仍是完整 HTML 文档，
+     用 iframe 的 srcdoc 承载（与应用内「放映」同一机制），所以：
+       ① 每页各自的 <style>/字体声明都保留（旧实现只取第一页的 head，
+          后面几页的用户样式会被静默丢掉）；
+       ② 一次只显示一页、可左右翻，而不是把所有页竖着堆成一个长滚动条。
+     注意：本文件会被拼进 WizDeck.html 的 <script> 里，所以源码内不能出现字面的
+     闭合 script 标签 —— 下面一律用 '<' + '/script>' 拼出来。 */
   function saveCleanHtml() {
     if (!store.model) { toast('还没有可导出的内容', 'warn'); return; }
     syncSlideDoc();
     var name = U.safeFileName(store.fileName || store.model.title, 'wizdeck');
-    var pages = store.model.slides.map(function (s, i) { return s.doc; }).join('\n');
-    /* 多页合并：保留第一页的 head，其余页的 body 追加 */
-    var first = store.model.slides[0].doc;
-    var head = first.slice(0, first.indexOf('<body'));
-    var tail = '</body>\n</html>';
-    var bodies = store.model.slides.map(function (s) {
-      var b = s.doc;
-      var i0 = b.indexOf('<body');
-      var i1 = b.lastIndexOf('</body>');
-      return i0 >= 0 && i1 > i0 ? b.slice(b.indexOf('>', i0) + 1, i1) : '';
-    }).join('\n');
-    U.downloadText(head + '<body data-wizdeck-pages="' + store.model.slides.length + '">\n' +
-      bodies + '\n' + tail, name + '.html', 'text/html');
-    toast('已导出纯 HTML（' + store.model.slides.length + ' 页内容）', 'ok');
+    var CW = U.CANVAS_W, CH = U.CANVAS_H;
+    var docs = store.model.slides.map(function (s) { return s.doc || ''; });
+    /* 每页正文用 JSON 字面量存，并把所有 < 转成 \u003c：
+       既防内容里的闭合 script 标签提前结束外层脚本，也防标签被当 HTML 解析。 */
+    var closeScript = '<' + '/script>';
+    /* 放映页不再自带 PAGES 副本，而是直接读下面这段 wizdeck-doc 工程区块：
+       人打开 = 可翻页的放映页；WizDeck 打开 = looksLikeProject 命中，无损还原全部页。 */
+    var projectBlock = WD.parse.projectJson(store.model);
+    var html = [
+      '<!DOCTYPE html>',
+      '<html lang="zh-CN">',
+      '<head>',
+      '<meta charset="UTF-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      '<title>' + U.escapeHtml(store.model.title || '智演演示') + '</title>',
+      '<style>',
+      'html,body{margin:0;height:100%;overflow:hidden;background:#0b0f16;',
+      'font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}',
+      '#frame{position:absolute;left:50%;top:50%;width:' + CW + 'px;height:' + CH + 'px;border:0;',
+      'background:#fff;box-shadow:0 18px 60px rgba(0,0,0,.5);',
+      'transform:translate(-50%,-50%) scale(1);transform-origin:50% 50%}',
+      '.wd-hud{position:fixed;right:18px;bottom:16px;display:flex;align-items:center;gap:10px;',
+      'padding:8px 12px;border-radius:999px;background:rgba(20,26,38,.72);color:#e8eefb;',
+      'font-size:13px;user-select:none;opacity:.28;transition:opacity .18s}',
+      '.wd-hud:hover{opacity:1}',
+      '.wd-hud button{width:30px;height:30px;border:0;border-radius:50%;',
+      'background:rgba(255,255,255,.12);color:#e8eefb;font-size:16px;line-height:1;cursor:pointer}',
+      '.wd-hud button:hover:not(:disabled){background:rgba(255,255,255,.24)}',
+      '.wd-hud button:disabled{opacity:.3;cursor:default}',
+      '.wd-hint{position:fixed;left:18px;bottom:20px;color:rgba(232,238,251,.45);font-size:12px}',
+      '</style>',
+      '</head>',
+      '<body>',
+      '<iframe id="frame" title="幻灯片"></iframe>',
+      '<div class="wd-hud">',
+      '<button id="prev" type="button" aria-label="上一页">&#8249;</button>',
+      '<span id="pos">1 / 1</span>',
+      '<button id="next" type="button" aria-label="下一页">&#8250;</button>',
+      '</div>',
+      '<div class="wd-hint">← → / 空格 / 滚轮 翻页 · Home 首页 · End 末页</div>',
+      projectBlock,
+      '<script>',
+      '(function(){',
+      'var blk=document.getElementById("wizdeck-doc");if(!blk)return;',
+      'var m;try{m=JSON.parse(blk.textContent);}catch(e){return}',
+      'var PAGES=(m.slides||[]).map(function(s){return s.doc||"";});',
+      'if(!PAGES.length)return;',
+      'var W=' + CW + ',H=' + CH + ',i=0;',
+      'var frame=document.getElementById("frame"),pos=document.getElementById("pos");',
+      'var prev=document.getElementById("prev"),next=document.getElementById("next");',
+      'function fit(){var s=Math.min((window.innerWidth-48)/W,(window.innerHeight-48)/H);',
+      'if(!isFinite(s)||s<=0)s=1;frame.style.transform="translate(-50%,-50%) scale("+s+")";}',
+      'function show(n){i=Math.max(0,Math.min(PAGES.length-1,n));frame.srcdoc=PAGES[i];',
+      'pos.textContent=(i+1)+" / "+PAGES.length;prev.disabled=i<=0;next.disabled=i>=PAGES.length-1;}',
+      'prev.addEventListener("click",function(){show(i-1);});',
+      'next.addEventListener("click",function(){show(i+1);});',
+      'window.addEventListener("keydown",function(e){',
+      'if(e.key==="ArrowRight"||e.key==="PageDown"||e.key===" "){e.preventDefault();show(i+1);}',
+      'else if(e.key==="ArrowLeft"||e.key==="PageUp"){e.preventDefault();show(i-1);}',
+      'else if(e.key==="Home"){e.preventDefault();show(0);}',
+      'else if(e.key==="End"){e.preventDefault();show(PAGES.length-1);}});',
+      'var lock=0;',
+      'window.addEventListener("wheel",function(e){var now=Date.now();',
+      'if(now-lock<420||Math.abs(e.deltaY)<8)return;lock=now;show(i+(e.deltaY>0?1:-1));},{passive:true});',
+      'window.addEventListener("resize",fit);',
+      'fit();show(0);',
+      '})();',
+      closeScript,
+      '</body>',
+      '</html>'
+    ].join('\n');
+    U.downloadText(html, name + '.html', 'text/html');
+    toast('已导出放映 HTML（' + docs.length + ' 页，可翻页）', 'ok');
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -9705,6 +11353,90 @@ body.dragging-file::after {
   }
 
   /* ══════════════════════════════════════════════════════════════════════
+     16.6 右栏分区折叠
+     ──────────────────────────────────────────────────────────────────────
+     右栏越长越难用：想改的那一项常常要滚半天才找到。照 Bento 的做法把每个
+     分区做成可折叠 —— 标题可点、箭头指示开合、状态记在 localStorage 里，
+     刷新之后还是你离开时的样子。
+
+     与 sec.hidden 的关系（唯一容易做错的地方）：
+       sec.hidden        = **业务**决定这一段现在相不相关（选中图表才有图表数据）
+       secBodies[id].hidden = **用户**决定这一段收起来了
+     两者互不覆盖：一个分区可以既「相关」又被用户收起。
+     自动展开只在「分区刚刚变相关、且用户没手动开合过它」时发生 ——
+     否则用户手动收起之后，每点一次画布它就自己弹开。
+     ══════════════════════════════════════════════════════════════════════ */
+
+  var SEC_KEY = 'wizdeck.insp.sections';
+  var secBodies = {};        /* id → 内容容器 */
+  var secClosed = {};        /* id → 是否收起（用户意图） */
+  var secManual = {};        /* id → 用户是否亲手开合过（自动展开要避开） */
+
+  function saveSecState() {
+    try { localStorage.setItem(SEC_KEY, JSON.stringify(secClosed)); } catch (e) { /* 隐身模式等 */ }
+  }
+
+  /* keepOpen：本次是自动展开，别把「程序开合」记成用户的意图 */
+  function setSectionClosed(id, closed, keepOpen) {
+    secClosed[id] = !!closed;
+    var body = secBodies[id];
+    if (body) body.hidden = !!closed;
+    var sec = $(id);
+    var head = sec ? sec.querySelector('.sec-head') : null;
+    if (head) {
+      head.setAttribute('aria-expanded', closed ? 'false' : 'true');
+      head.title = closed ? '展开这一段' : '收起这一段';
+    }
+    if (!keepOpen) { secManual[id] = true; saveSecState(); }
+  }
+
+  function toggleSection(id) { setSectionClosed(id, !secClosed[id], false); }
+
+  /* 分区变相关了就自动展开，但用户亲手收起过的分区不碰 */
+  function autoExpandSection(id) {
+    if (!secClosed[id] || secManual[id]) return;
+    setSectionClosed(id, false, true);
+  }
+
+  /* 把现有的每个 .insp-sec 改造成「可点标题 + 可收起内容」。
+     只动 DOM 结构，不动里面的控件与 id，所以绑定代码一行都不用改。 */
+  function buildInspSections() {
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(SEC_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+    $$('.insp-sec').forEach(function (sec) {
+      var id = sec.id;
+      if (!id) return;
+      var title = sec.querySelector(':scope > .sec-title');
+      if (!title) return;
+      /* 内容整段包一层 .sec-body 才能一起收起。
+         注意**不含** .sec-title —— 标题要留在外面当折叠把手。 */
+      var body = document.createElement('div');
+      body.className = 'sec-body';
+      body.id = id + '-body';
+      Array.prototype.slice.call(sec.children).forEach(function (c) {
+        if (c !== title) body.appendChild(c);
+      });
+
+      /* 标题从 <div> 换成 <button>：可点、可聚焦、键盘 Enter/Space 都能开合。
+         沿用原来的 class，样式不必重写。 */
+      var head = document.createElement('button');
+      head.type = 'button';
+      head.className = title.className + ' sec-head';
+      head.setAttribute('aria-controls', id + '-body');
+      head.innerHTML = title.innerHTML;
+      sec.replaceChild(head, title);
+      sec.appendChild(body);
+
+      secBodies[id] = body;
+      secClosed[id] = !!saved[id];
+      body.hidden = !!secClosed[id];
+      head.setAttribute('aria-expanded', secClosed[id] ? 'false' : 'true');
+      head.title = secClosed[id] ? '展开这一段' : '收起这一段';
+      head.addEventListener('click', function () { toggleSection(id); });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
      17. 示例与帮助
      ══════════════════════════════════════════════════════════════════════ */
 
@@ -9792,12 +11524,14 @@ body.dragging-file::after {
     if (m) m.hidden = true;
   }
 
-  function buildContextItems(ctx) {
+  function buildContextItems(ctx, forceMulti) {
     ctx = ctx || {};
     var onSlide = ctx.slideIndex !== undefined && ctx.slideIndex !== null;
     var slideIndex = onSlide ? ctx.slideIndex : store.current;
     var hasSel = E.selection.length > 0;
-    var multi = E.selection.length > 1;
+    var multi = forceMulti !== undefined && forceMulti !== null
+      ? !!forceMulti
+      : E.selection.length > 1;
 
     if (onSlide) {
       return [
@@ -9861,11 +11595,20 @@ body.dragging-file::after {
     return items;
   }
 
-  function openContextMenu(x, y, ctx) {
+  /* 右键菜单定位。
+     坐标统一收口成**父页 client 坐标**：菜单是 position:fixed 的顶层节点，
+     只有父页坐标能直接落到 left/top 上。以前画布那次传的是帧内坐标，
+     两者差一个 stageRect 偏移，菜单就落在帧左上角附近而不是鼠标处。
+     末端再做一次视口钳制：靠近右/下边缘时整体回推，不允许溢出屏幕。
+     菜单比视口还高时把 top 压回 6px（而不是 Math.max(6, 负数) 之外再叠加），
+     保证顶部始终可见 —— 否则顶部条目会被推出视口，菜单看起来"缺了一截"。 */
+  function openContextMenu(opts) {
+    opts = opts || {};
+    var x = opts.x, y = opts.y;
     var menu = $('ctxmenu');
     if (!menu) return;
     menu.innerHTML = '';
-    buildContextItems(ctx).forEach(function (it) {
+    buildContextItems(opts.ctx, opts.forceMulti).forEach(function (it) {
       if (it.sep) { menu.appendChild(el('div', { class: 'ctx-sep' })); return; }
       var btn = el('button', {
         class: 'ctx-item' + (it.danger ? ' danger' : ''), type: 'button'
@@ -9877,10 +11620,13 @@ body.dragging-file::after {
       menu.appendChild(btn);
     });
 
+    /* 必须先显示再量：offsetWidth/Height 在 display:none 时是 0，
+       钳制会算成「菜单是 0×0」，于是永远不加偏移 */
     menu.hidden = false;
     var w = menu.offsetWidth, h = menu.offsetHeight;
-    menu.style.left = Math.min(Math.max(6, x), window.innerWidth - w - 6) + 'px';
-    menu.style.top = Math.min(Math.max(6, y), window.innerHeight - h - 6) + 'px';
+    var gap = 6;
+    menu.style.left = Math.max(gap, Math.min(x, window.innerWidth - w - gap)) + 'px';
+    menu.style.top = Math.max(gap, Math.min(y, window.innerHeight - h - gap)) + 'px';
   }
 
   function insertSlideAt(index) {
@@ -9891,8 +11637,14 @@ body.dragging-file::after {
   }
 
   function duplicateSlide(index) {
-    store.duplicateSlide(index);
-    loadStage().then(function () { renderRail(); updateInspector(); });
+    var i = (index === undefined) ? store.current : index;
+    /* 先把当前舞台内容写回它自己那一页（此刻 current 仍等于正在显示页，安全）。
+       随后走 loadStage 而不是 goSlide —— goSlide 开头会再 syncSlideDoc 一次，
+       但那时 store.duplicateSlide 已把 current 挪到了副本上，会把「上一页」的画面
+       误写进副本，于是复制出来的不是被复制的那一页。 */
+    syncSlideDoc();
+    store.duplicateSlide(i);
+    loadStage().then(function () { renderRail(); renderRailThumbs(); updateInspector(); });
   }
 
   function selectAllOnSlide() {
@@ -9927,9 +11679,10 @@ body.dragging-file::after {
       ['缩放 / 旋转', '拖四角手柄 · 拖顶部圆点旋转（按住 Shift 吸附 15°）'],
       ['改文字', '双击元素直接编辑 · Esc 或 Ctrl+Enter 退出'],
       ['复制删除', 'Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+D 再制 · Delete 删除'],
-      ['层级', 'Ctrl+] 上移一层 · Ctrl+[ 下移一层'],
+      ['层级', 'Ctrl+] 上移一层 · Ctrl+[ 下移一层 · 右栏图层段有置顶/置底'],
       ['历史', 'Ctrl+Z 撤销 · Ctrl+Shift+Z 重做'],
-      ['对齐', '多选后用浮动工具条或右键菜单对齐'],
+      ['对齐', '多选后用右键菜单对齐、分布'],
+      ['图表', '选中图表后在右栏「图表数据」里改标题、分类、系列，改完自动生效（双击图表会把那段唤到眼前）'],
       ['插入', '顶栏「文本框 / 标题 / 形状 / 图片 / 视频」'],
       ['查找', 'Ctrl+F 查找文字 · Enter 下一个 · Esc 关闭'],
       ['样式搬运', '顶栏格式刷：选中源元素后点它，再点目标元素'],
@@ -10065,8 +11818,10 @@ body.dragging-file::after {
     });
 
     /* 顶栏 */
-    /* 顶栏的「打开 HTML」按钮已按要求移除；打开入口现在在
-       空状态的「打开 HTML 文件」按钮、保存与导出菜单里的第一项，以及 Ctrl+O / 拖拽。 */
+    /* 「打开 HTML」的入口定在**两处**：顶栏这个按钮 + 空状态的大按钮，
+       另有 Ctrl+O 与拖拽。「保存与导出」菜单只管保存与导出，不塞「打开」——
+       那段注释曾经写着「入口已移入菜单第一项」，实际菜单里从来没有那一项，
+       顶栏按钮却一直留着，注释和实现对不上，回归按注释写就一直是红的。 */
     var openBtn = $('btn-open'); if (openBtn) openBtn.addEventListener('click', function () { $('file-input').click(); });
     $('btn-open-2').addEventListener('click', function () { $('file-input').click(); });
     $('file-input').addEventListener('change', function () {
@@ -10109,6 +11864,12 @@ body.dragging-file::after {
     bindPainter();
     bindFind();
 
+    /* 画布绘制工具（自由绘制 / 多边形）的桥。
+       绘制流程本身在 08-draw.js 里自己管监听与预览，但它不该知道
+       检查器、撤销栈、选中态这些 UI 内部事 —— 这里只把需要的几件事交出去。
+       桥必须在 bindInsertMenu 之后、用户可能点菜单之前就位。 */
+    installDrawBridge();
+
     /* 面板折叠
        坑：原来的展开按钮就在面板的 .panel-head 里，而 .panel-head 在折叠时
        是 display:none —— 收起之后按钮跟着消失，再也点不回来。
@@ -10132,21 +11893,6 @@ body.dragging-file::after {
     };
     E.toggleBothPanels = toggleBothPanels;
 
-    /* 浮层工具条 */
-    $$('#ov-toolbar button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var t = b.getAttribute('data-tb');
-        if (t === 'edit-text') {
-          var n = pickTextBlockInside(selected(), 0, 0) || selected();
-          if (n && (n.textContent || '').trim()) beginTextEdit(n);
-          else toast('这个元素没有可编辑的文字', 'warn');
-        } else if (t === 'dup') duplicateSelection();
-        else if (t === 'front') layerAction('front');
-        else if (t === 'back') layerAction('back');
-        else if (t === 'del') deleteSelection();
-      });
-    });
-
     /* 添加元素已上移到顶栏的「文本框 / 标题 / 形状」插入组 */
 
     /* 图层操作按钮 */
@@ -10164,6 +11910,122 @@ body.dragging-file::after {
     layerBtn('btn-layer-front', 'front');
     layerBtn('btn-layer-back', 'back');
 
+    /* 图表数据段（右栏）：改一下就重画，没有「应用」按钮。
+       用 input 事件而不是 change —— change 只在失焦时触发，
+       那就退回成「改完点别处才生效」，即时编辑的意义全没了。
+       change 仍然再绑一份，让勾选框这类控件在部分浏览器上也能兜住。 */
+    var chartSec = $('sec-chart');
+    if (chartSec) {
+      ['input', 'change'].forEach(function (t) {
+        chartSec.addEventListener(t, function (ev) {
+          var el = ev.target;
+          if (!el || !el.id) return;
+          if (el.id === 'chf-reset') return;
+          /* 系列下拉是「就地改值」：它决定这个系列按柱还是按线画。
+             走防抖会等 400ms 才变，而重建面板反而会让循环里下一次点不到
+             下一个 select —— 所以**就地**重画，不重建。 */
+          if (el.getAttribute && el.getAttribute('data-f') === 'kind') {
+            applyChartPanelNow(true);
+            return;
+          }
+          scheduleChartLive();
+        });
+      });
+      /* 按钮类（加/删系列与分类、换色、背景色）走 click、不进上面那个 input 委托 ——
+         它们不是输入控件，而且点一下该立刻重画，不该受「停手 0.4 秒」那条防抖约束
+         （用户点完就在等图变，等一下反而像没生效）。 */
+      chartSec.addEventListener('click', function (ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        /* 注意：这里**不能**无条件 ev.preventDefault()。以前那一句会把
+           同一次点击的默认动作一并取消 —— 结果 ① 勾选框「显示图例 / 显示数值」
+           永远打不上勾（checkbox 的切换就是 click 的默认动作），
+           ② 程序 picks[k].click() 触发的原生色盘也被这句挡死。
+           按钮都是 type="button"，本就没有需要阻止的默认行为，直接去掉。 */
+
+        /* 加一个系列：基于面板当前状态追加，再立即落地 */
+        if (t.closest('#chf-add-series')) { chartAddSeries(); return; }
+        /* 加一个分类：给每个系列补一行空值 */
+        if (t.closest('#chf-add-cat')) { chartAddCategory(); return; }
+
+        var delSeries = t.closest('.series-row .chart-del');
+        if (delSeries) { chartRemoveSeries(parseInt(delSeries.getAttribute('data-si'), 10)); return; }
+
+        var delRow = t.closest('#chf-grid .chart-del');
+        if (delRow) { chartRemoveCategory(parseInt(delRow.getAttribute('data-ri'), 10)); return; }
+
+        /* 系列颜色格 */
+        var sw = t.closest('.sw-series');
+        if (sw) {
+          /* 点一下 → 直接开**原生色盘**（渐变着色区 + 吸管 + 色相条 + HEX/RGB），
+             色盘贴着这格弹出。选色由下面 .sw-pick 的 input 监听实时刷图。
+             想快速沿色板轮换（挑一组明显不同的颜色）就 Alt+点。 */
+          var which = sw.getAttribute('data-f') || 'stroke';
+          var picks = sw.parentNode.querySelectorAll('.sw-pick');
+          if (!ev.altKey) {
+            for (var k = 0; k < picks.length; k++) {
+              if ((picks[k].getAttribute('data-f') || 'stroke') !== which) continue;
+              /* 先把色盘对准当前颜色，否则打开时停在旧色上 */
+              var cur0 = sw.getAttribute('data-color') || '';
+              if (/^#[0-9a-f]{3}$/i.test(cur0)) {
+                cur0 = '#' + cur0[1] + cur0[1] + cur0[2] + cur0[2] + cur0[3] + cur0[3];
+              }
+              openColorPickerAt(picks[k], sw, cur0, null);
+              break;
+            }
+            return;
+          }
+          var pal = WD.elements.chartPalette();
+          var cur = sw.getAttribute('data-color') || '';
+          var idx = pal.indexOf(cur);
+          var next = pal[(idx + 1 + pal.length) % pal.length];
+          sw.setAttribute('data-color', next);
+          sw.style.background = next;
+          applyChartPanelNow();
+          return;
+        }
+
+        /* 背景色：无 / 预设 / 自定义 */
+        if (t.closest('#chf-bg-none')) { chartSetBg(''); return; }
+        var bg = t.closest('#chf-bg .sw-bg');
+        if (bg) { chartSetBg(bg.getAttribute('data-color') || ''); return; }
+        if (t.closest('#chf-bg-pick')) { chartPickBg(t.closest('#chf-bg-pick')); return; }
+      });
+
+      /* 原生取色器（色盘）选了色 → 立刻刷图，不走防抖。
+         input 事件在色盘拖动过程中持续触发，所以这一路不被防抖管。 */
+      chartSec.addEventListener('input', function (ev) {
+        var pick = ev.target && ev.target.closest && ev.target.closest('.sw-pick');
+        if (!pick) return;
+        var which = pick.getAttribute('data-f') || 'stroke';
+        /* 同一个 si 下两个 swatch + 两个 picker，按 data-f 找对应的那个 */
+        var sels = pick.parentNode.querySelectorAll('.sw-series');
+        var match = null;
+        for (var i = 0; i < sels.length; i++) {
+          if ((sels[i].getAttribute('data-f') || 'stroke') === which) { match = sels[i]; break; }
+        }
+        if (!match) return;
+        /* input[type=color].value 永远是 #rrggbb，不要再叠一层 # */
+        var hex = pick.value || '#000000';
+        if (hex.charAt(0) !== '#') hex = '#' + hex;
+        match.setAttribute('data-color', hex);
+        match.style.background = hex;
+        applyChartPanelNow();
+      });
+      $('chf-reset').addEventListener('click', function () {
+        var info = chartDataOf(selected());
+        if (!info) { toast('先选中一张图表', 'warn'); return; }
+        if (chartLiveTimer) { clearTimeout(chartLiveTimer); chartLiveTimer = null; }
+        repaintChart(info.img, WD.elements.defaultChartData(info.kind));
+        commit('恢复示例图表');
+        /* 数据已经变了，但签名相同的话 renderChartPanel 会直接返回、
+           输入框里还留着旧值 —— 这里手动作废签名强制重建。 */
+        chartPanelSig = '';
+        renderChartPanel(selected());
+        toast('已恢复为示例数据', 'ok');
+      });
+    }
+
     /* 选择框交互 */
     var frameBox = $('frame-box');
     frameBox.addEventListener('pointerdown', function (ev) {
@@ -10175,25 +12037,284 @@ body.dragging-file::after {
       beginDrag('move', ev);
       ev.preventDefault();
     });
-    $$('.handle', frameBox).forEach(function (h) {
-      h.addEventListener('pointerdown', function (ev) {
-        if (h.getAttribute('data-h') === 'rot') beginDrag('rotate', ev);
-        else beginDrag('resize', ev);
-        ev.preventDefault();
-        ev.stopPropagation();
-      });
+    /* 手柄指针：用**事件委托**统一处理 —— 多边形的顶点手柄是动态生成的，
+       一次性 forEach 绑不到后来才插入的节点。data-h 决定走哪种拖拽。 */
+    frameBox.addEventListener('pointerdown', function (ev) {
+      var h = ev.target && ev.target.closest && ev.target.closest('.handle');
+      if (!h || !frameBox.contains(h)) return;
+      var kind = h.getAttribute('data-h') || '';
+      if (kind === 'rot') beginDrag('rotate', ev);
+      else if (kind === 'ep-start' || kind === 'ep-end' || kind === 'ep-bend'
+            || kind === 'ep-c1' || kind === 'ep-c2') {
+        beginEndpointDrag(kind, ev);
+      } else if (kind.indexOf('vtx-') === 0) {
+        beginVertexDrag(parseInt(kind.slice(4), 10), ev);
+      } else {
+        beginDrag('resize', ev);
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
     });
 
-    /* 右键菜单：画布与左栏缩略图都可唤起 */
-    $('stage-frame').addEventListener('contextmenu', function (ev) {
+    /* 端点拖动：两点头模型的核心交互。
+       拖起点 / 终点 / 拐点 → 改那个点在**画布上的绝对位置**，
+       然后按三点重新求包围盒、写回元素的位置与尺寸，最后把三点重新归一化成比例。
+       因为盒子是「推」出来的，所以拖出来的是任意角度的斜线 ——
+       这正是「两点为主、可以任意拖动」想要的行为。 */
+    var MIN_LINE_BOX = 8;   /* 包围盒下限：水平线高度为 0 的话手柄会叠在一起没法拖 */
+
+    function beginEndpointDrag(handleKind, ev) {
+      if (E.drag) return;
+      var el = E.selection[0];
+      if (!el) return;
+      var lp = WD.elements.linePointsOf(el);
+      if (!lp) return;
+      var s = E.stage.scale;
+      var startMx = ev.clientX, startMy = ev.clientY;
+      /* 起手时把三点**一次性**换算成画布绝对坐标，后面都在绝对坐标里算 */
+      var box = {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
+        h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
+      };
+      var toAbs = function (p) { return [box.x + p[0] / 100 * box.w, box.y + p[1] / 100 * box.h]; };
+      var startPts = {
+        p1: toAbs(lp.p1),
+        p2: toAbs(lp.p2),
+        bend: lp.bend ? toAbs(lp.bend) : null,
+        c1: lp.c1 ? toAbs(lp.c1) : null,
+        c2: lp.c2 ? toAbs(lp.c2) : null,
+      };
+      var key = handleKind === 'ep-start' ? 'p1'
+        : handleKind === 'ep-end' ? 'p2'
+        : handleKind === 'ep-c1' ? 'c1'
+        : handleKind === 'ep-c2' ? 'c2'
+        : 'bend';
+      if (!startPts[key]) return;
+
+      E.drag = { mode: 'endpoint', handle: handleKind };
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY);
+      ev.stopPropagation();
+
+      function move(e) {
+        /* 事件可能来自父页（手柄本身）或帧文档（指针滑到画布上方之后）。
+           帧内的 clientX/Y 是**帧视口坐标**，要换算回父页坐标再算位移，
+           否则鼠标一进画布，端点就会瞬移。 */
+        var nx = e.clientX, ny = e.clientY;
+        var fw = frameWin();
+        if (fw && e.view === fw) {
+          var sr = E.stage.el.getBoundingClientRect();
+          nx = sr.left + e.clientX * s;
+          ny = sr.top + e.clientY * s;
+        }
+        var dx = (nx - startMx) / s;
+        var dy = (ny - startMy) / s;
+        var pts = {
+          p1: [startPts.p1[0], startPts.p1[1]],
+          p2: [startPts.p2[0], startPts.p2[1]],
+          bend: startPts.bend ? [startPts.bend[0], startPts.bend[1]] : null,
+          c1: startPts.c1 ? [startPts.c1[0], startPts.c1[1]] : null,
+          c2: startPts.c2 ? [startPts.c2[0], startPts.c2[1]] : null,
+        };
+        pts[key][0] += dx;
+        pts[key][1] += dy;
+
+        /* 包围盒只由「锚点 + 肘部拐点」决定：拖切线手柄只改弯曲、不改元素大小。 */
+        var all = [pts.p1, pts.p2];
+        if (pts.bend) all.push(pts.bend);
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        all.forEach(function (p) {
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        /* 太扁就居中撑到下限，否则手柄会叠成一点、拖不回来 */
+        if (maxX - minX < MIN_LINE_BOX) {
+          var mxc = (minX + maxX) / 2;
+          minX = mxc - MIN_LINE_BOX / 2; maxX = mxc + MIN_LINE_BOX / 2;
+        }
+        if (maxY - minY < MIN_LINE_BOX) {
+          var myc = (minY + maxY) / 2;
+          minY = myc - MIN_LINE_BOX / 2; maxY = myc + MIN_LINE_BOX / 2;
+        }
+        var bw = maxX - minX, bh = maxY - minY;
+
+        el.style.left = Math.round(minX) + 'px';
+        el.style.top = Math.round(minY) + 'px';
+        el.style.width = Math.round(bw) + 'px';
+        el.style.height = Math.round(bh) + 'px';
+
+        /* 绝对 → 比例（0~100）。用 round2 收敛浮点噪声，
+           否则来回拖几次比例点会攒出一串 33.333333333 之类的小数。 */
+        var r2 = function (v) { return Math.round(v * 100) / 100; };
+        var norm = function (p) { return [r2((p[0] - minX) / bw * 100), r2((p[1] - minY) / bh * 100)]; };
+        el.setAttribute('data-wd-p1', JSON.stringify(norm(pts.p1)));
+        el.setAttribute('data-wd-p2', JSON.stringify(norm(pts.p2)));
+        if (pts.bend) el.setAttribute('data-wd-bend', JSON.stringify(norm(pts.bend)));
+        if (pts.c1) el.setAttribute('data-wd-c1', JSON.stringify(norm(pts.c1)));
+        if (pts.c2) el.setAttribute('data-wd-c2', JSON.stringify(norm(pts.c2)));
+
+        refreshOverlay();
+      }
+      function up() {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        window.removeEventListener('blur', up, true);
+        var d = frameDoc();
+        if (d) {
+          d.removeEventListener('pointermove', move, true);
+          d.removeEventListener('pointerup', up, true);
+          d.removeEventListener('pointercancel', up, true);
+        }
+        var w = frameWin();
+        if (w) { w.removeEventListener('pointerup', up, true); w.removeEventListener('blur', up, true); }
+        E.drag = null;
+        var commitLabel = handleKind === 'ep-start' ? '调整起点'
+          : handleKind === 'ep-end' ? '调整终点'
+          : handleKind === 'ep-bend' ? '调整拐点'
+          : handleKind === 'ep-c1' ? '调整起点切线'
+          : handleKind === 'ep-c2' ? '调整终点切线'
+          : '调整端点';
+        commit(commitLabel);
+      }
+      /* ★ 必须同时在**父页和帧内**监听。
+         端点手柄在父页，但拖动过程中手柄本身会跟着刷新、移走；
+         松手时指针底下很可能已经是 iframe 了 —— 那一刻 pointerup 落在
+         **帧文档**里，父页 window 根本收不到，于是 E.drag 永远清不掉，
+         表现为「第一次拖有效，之后再拖就完全没反应」（beginEndpointDrag
+         开头有 if (E.drag) return）。拖到窗口外松手也一样，所以补 blur 兜底。 */
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+      window.addEventListener('blur', up, true);
+      var fd = frameDoc();
+      if (fd) {
+        fd.addEventListener('pointermove', move, true);
+        fd.addEventListener('pointerup', up, true);
+        fd.addEventListener('pointercancel', up, true);
+      }
+      var fw = frameWin();
+      if (fw) { fw.addEventListener('pointerup', up, true); fw.addEventListener('blur', up, true); }
+    }
+
+    /* 顶点拖动：多边形闭合后逐个改形状。
+       与端点拖动同一套「绝对坐标里搬一个点 → 重算包围盒 → 全部点重新归一化」的模型，
+       区别只是点是任意多个（存 data-wd-points），且拖的是第 index 个顶点。
+       非拖动点保持画布位置不变，所以拖动某个顶点时其余顶点原地不动、只有包围盒跟着胀缩。 */
+    function beginVertexDrag(index, ev) {
+      if (E.drag || !(index >= 0)) return;
+      var el = E.selection[0];
+      if (!el || !WD.elements.verticesOf) return;
+      var verts = WD.elements.verticesOf(el);
+      if (!verts.length || index >= verts.length) return;
+      var s = E.stage.scale;
+      var startMx = ev.clientX, startMy = ev.clientY;
+      var box = {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        w: parseFloat(el.style.width) || el.getBoundingClientRect().width,
+        h: parseFloat(el.style.height) || el.getBoundingClientRect().height,
+      };
+      var toAbs = function (p) { return [box.x + p[0] / 100 * box.w, box.y + p[1] / 100 * box.h]; };
+      var startAbs = verts.map(toAbs);
+
+      E.drag = { mode: 'vertex', index: index };
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      function move(e) {
+        var nx = e.clientX, ny = e.clientY;
+        var fw = frameWin();
+        if (fw && e.view === fw) {
+          var sr = E.stage.el.getBoundingClientRect();
+          nx = sr.left + e.clientX * s;
+          ny = sr.top + e.clientY * s;
+        }
+        var dx = (nx - startMx) / s;
+        var dy = (ny - startMy) / s;
+        var abs = startAbs.map(function (p) { return [p[0], p[1]]; });
+        abs[index][0] += dx;
+        abs[index][1] += dy;
+
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        abs.forEach(function (p) {
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        if (maxX - minX < MIN_LINE_BOX) {
+          var mxc = (minX + maxX) / 2;
+          minX = mxc - MIN_LINE_BOX / 2; maxX = mxc + MIN_LINE_BOX / 2;
+        }
+        if (maxY - minY < MIN_LINE_BOX) {
+          var myc = (minY + maxY) / 2;
+          minY = myc - MIN_LINE_BOX / 2; maxY = myc + MIN_LINE_BOX / 2;
+        }
+        var bw = maxX - minX, bh = maxY - minY;
+
+        el.style.left = Math.round(minX) + 'px';
+        el.style.top = Math.round(minY) + 'px';
+        el.style.width = Math.round(bw) + 'px';
+        el.style.height = Math.round(bh) + 'px';
+
+        var r2 = function (v) { return Math.round(v * 100) / 100; };
+        var norm = function (p) { return [r2((p[0] - minX) / bw * 100), r2((p[1] - minY) / bh * 100)]; };
+        el.setAttribute('data-wd-points', JSON.stringify(abs.map(norm)));
+        WD.elements.syncLine(el);
+        refreshOverlay();
+      }
+      function up() {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        window.removeEventListener('blur', up, true);
+        var d = frameDoc();
+        if (d) {
+          d.removeEventListener('pointermove', move, true);
+          d.removeEventListener('pointerup', up, true);
+          d.removeEventListener('pointercancel', up, true);
+        }
+        var w = frameWin();
+        if (w) { w.removeEventListener('pointerup', up, true); w.removeEventListener('blur', up, true); }
+        E.drag = null;
+        commit('调整顶点 ' + (index + 1));
+      }
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+      window.addEventListener('blur', up, true);
+      var fd = frameDoc();
+      if (fd) {
+        fd.addEventListener('pointermove', move, true);
+        fd.addEventListener('pointerup', up, true);
+        fd.addEventListener('pointercancel', up, true);
+      }
+      var fw2 = frameWin();
+      if (fw2) { fw2.addEventListener('pointerup', up, true); fw2.addEventListener('blur', up, true); }
+    }
+
+    /* ══ 右键菜单：画布与左栏缩略图都可唤起 ══
+       画布上的右键实际由**帧内**监听接住（见 bindFrameEvents —— 右键事件不跨文档
+       冒泡），这一段负责帧外那一圈留白，以及左栏缩略图。两处最终都落到
+       openCanvasContextMenu()，保证菜单内容与"右键的那个对象"永远一致。 */
+    $('stage-frame').addEventListener('contextmenu', function (ev) {
+      var p = clientToFrame(ev.clientX, ev.clientY);
+      ev.preventDefault();
+      /* 舞台还没就绪时没有帧内坐标可用，退化成纯位置菜单（不碰选区） */
+      openCanvasContextMenu(p ? p.hit : null, { x: ev.clientX, y: ev.clientY });
     });
     $('rail').addEventListener('contextmenu', function (ev) {
       var item = ev.target.closest ? ev.target.closest('.rail-item') : null;
       if (!item) return;
       ev.preventDefault();
-      openContextMenu(ev.clientX, ev.clientY, { slideIndex: Number(item.getAttribute('data-index')) });
+      var idx = Number(item.getAttribute('data-index'));
+      /* 左栏同理：菜单描述的必须是右键那一页，所以先把舞台切过去 */
+      if (isFinite(idx) && idx !== store.current) goSlide(idx);
+      openContextMenu({ x: ev.clientX, y: ev.clientY, ctx: { slideIndex: idx } });
     });
 
     /* 模态 / 放映关闭 */
@@ -10287,6 +12408,10 @@ body.dragging-file::after {
 
     bindInspector();
     bindFormatBar();
+    /* 分区折叠的 DOM 改造要在 bindInspector 之后做：
+       那一步只搬节点、不重建控件，已经绑好的事件处理器跟着节点一起搬家，不会失效。
+       放在这里也保证了首次 updateInspector 之前分区结构已经就位。 */
+    buildInspSections();
     setStatusHint(null);
     updateZoomLabel();
     updateHistoryButtons();
@@ -10363,13 +12488,12 @@ body.dragging-file::after {
       ev.stopPropagation();
       showMenu(trigger, menu, function (m) {
         [
-          /* 顶栏的「打开 HTML」按钮已按要求移除，
-             打开入口收进这个文件菜单 —— 否则载入文档之后就再也没法换文件了。
-             快捷键 Ctrl+O 与拖拽仍然有效。 */
-          { ico: '📂', txt: '打开 HTML 文件', hint: 'Ctrl+O', run: function () { $('file-input').click(); } },
-          { ico: '💾', txt: '保存工程（.wd.html）', hint: 'Ctrl+S', run: saveProject },
-          { ico: '🗎', txt: '导出 HTML', hint: '', run: saveCleanHtml },
-          { ico: '📊', txt: '导出 PPTX', hint: 'Ctrl+E', run: doExportPptx },
+          /* 顶栏有「打开」按钮 + 空状态「打开 HTML 文件」按钮 + Ctrl+O + 拖拽，
+             四条入口都只做一件事：点 $('file-input').click() -> change -> readFile。 */
+          { ico: '💾', txt: '保存', hint: 'Ctrl+S', run: saveProject },
+          { ico: '🗎', txt: '导出为 HTML（放映页）', hint: '', run: saveCleanHtml },
+          { ico: '📦', txt: '导出为 HTML（工程文件）', hint: '', run: saveProjectFile },
+          { ico: '📊', txt: '导出为 Power Point', hint: 'Ctrl+E', run: doExportPptx },
         ].forEach(function (it) {
           var b = el('button', { class: 'menu-item', type: 'button' });
           b.appendChild(el('span', { class: 'mi-ico', text: it.ico }));
@@ -10384,6 +12508,10 @@ body.dragging-file::after {
 
   /* 插入组：「形状」下拉。图标是 Unicode 几何符号 ——
      它们只占 16px 的一格，右边还有文字说明，不需要自己画一套 SVG。 */
+  /* 形状下拉。分组用 menu-sep 隔开（几何 → 一维 → 曲线族），
+     顺序与 PowerPoint / Bento 一致：先基本形状，再线条，最后是曲线与自由形状。
+     线条与曲线族的图标刻意选成「看得出来是哪种线」的：
+     曲线是弧、连接线是折角、曲线连接线是 S、自由绘制是随手一笔、多边形是六边形。 */
   var SHAPE_KINDS = [
     { k: 'rect', ico: '▭', txt: '矩形' },
     { k: 'round', ico: '▢', txt: '圆角矩形' },
@@ -10391,9 +12519,16 @@ body.dragging-file::after {
     { k: 'oval', ico: '⬭', txt: '椭圆' },
     { k: 'triangle', ico: '△', txt: '三角形' },
     { k: 'para', ico: '▱', txt: '平行四边形' },
-    { k: 'line', ico: '─', txt: '直线' },
+    { k: 'poly', ico: '⬡', txt: '多边形', draw: true },
+    { sep: true },
+    { k: 'line', ico: '╱', txt: '直线' },
     { k: 'arrow', ico: '⟶', txt: '箭头' },
     { k: 'dblarrow', ico: '⟷', txt: '双向箭头' },
+    { sep: true },
+    { k: 'curve', ico: '◜', txt: '曲线' },
+    { k: 'connector', ico: '⌐', txt: '连接线' },
+    { k: 'connectorcurve', ico: '∿', txt: '曲线连接线' },
+    { k: 'drawn', ico: '✎', txt: '自由绘制', draw: true },
     /* 图片 / 视频不混在这里 —— 它们要弹文件选择器、是「独立能力」而不是「形状」，
        混在形状里既容易被误点，也让这个下拉名不副实。已上移为顶栏两个按钮。 */
   ];
@@ -10431,7 +12566,10 @@ body.dragging-file::after {
   /* 插入组的通用下拉：文本框 / 标题 / 形状 / 公式 / 图表。
      条目样式与「保存与导出」完全一致 —— **左边图标、右边文字**。
      以前这里是一排只有符号的方块：四个「H」并排放在一起，
-     哪个是一级哪个是四级全靠猜；中文标签被藏在 title 里，得把鼠标停上去等一秒才读得到。 */
+     哪个是一级哪个是四级全靠猜；中文标签被藏在 title 里，得把鼠标停上去等一秒才读得到。
+
+     kinds 里 { sep:true } 是分组分隔线；{ draw:true } 表示这个形状要在画布上
+     拖 / 点着画（自由绘制、多边形），点它只切换到绘制态，元素由 WD.drawTool 落地。 */
   function bindKindMenu(triggerId, menuId, kinds) {
     var trigger = $(triggerId);
     var menu = $(menuId);
@@ -10441,10 +12579,16 @@ body.dragging-file::after {
       showMenu(trigger, menu, function (m) {
         var row = el('div', { class: 'shape-row' });
         kinds.forEach(function (s) {
+          if (s.sep) { row.appendChild(el('div', { class: 'menu-sep' })); return; }
           var b = el('button', { class: 'menu-item', type: 'button', title: s.txt });
           b.appendChild(el('span', { class: 'mi-ico', text: s.ico }));
           b.appendChild(el('span', { class: 'mi-txt', text: s.txt }));
-          b.addEventListener('click', function () { closeMenus(); addElement(s.k); });
+          if (s.draw) b.appendChild(el('span', { class: 'mi-hint', text: '画布上拖/点' }));
+          b.addEventListener('click', function () {
+            closeMenus();
+            if (s.draw && WD.drawTool) WD.drawTool.start(s.k);
+            else addElement(s.k);
+          });
           row.appendChild(b);
         });
         m.appendChild(row);
@@ -10779,14 +12923,24 @@ body.dragging-file::after {
      ══════════════════════════════════════════════════════════════════════ */
 
   /* mode:
-       free   宽高各自独立变（矩形、三角形、表格…）
-       ratio  锁定宽高比，圆形 ratio = 1，任何拖法都还是圆
-       lock-h 高度锁死，只能改长度（直线 / 箭头 / 双箭头）        */
+       free         宽高各自独立变（矩形、三角形、表格…）
+       ratio        锁定宽高比，圆形 ratio = 1，任何拖法都还是圆
+
+     ★ 线条类（line / arrow / dblarrow / curve / connector / connectorcurve）
+     这里**故意不给约束** —— 它们已经改成「两点头模型」：
+     几何由 data-wd-p1 / p2（/ bend）三个比例点描述，盒子就是这三点的包围盒。
+
+     原来给它们挂 lock-h / lock-h-min 是为了「斜拖不把线拉成色块」，
+     但那条约束同时把线**锁死成水平**，与「两点可以任意拖动」直接冲突。
+     现在换成：8 个盒手柄全部隐藏（见 deadHandles），只留两个端点手柄，
+     宽度 / 高度由拖端点**自己推出来** —— 既不会被拉成色块，
+     又允许画任意角度的斜线。 */
   var CONSTRAINTS = {
     circle:   { mode: 'ratio' },
-    line:     { mode: 'lock-h', lock: 'h' },
-    arrow:    { mode: 'lock-h', lock: 'h' },
-    dblarrow: { mode: 'lock-h', lock: 'h' },
+    /* 自由绘制与多边形是**等比**的：笔迹与顶点集都按原始包围盒存成比例值，
+       宽高各自独立拉伸会把字迹压扁成另一幅画。锁比例之后「改大小」就是整体缩放。 */
+    drawn:          { mode: 'ratio' },
+    poly:           { mode: 'ratio' },
   };
 
   function kindOf(node) {
@@ -10836,8 +12990,7 @@ body.dragging-file::after {
       return;
     }
 
-    if (c.mode === 'lock-h') {
-      /* 高度锁死：n/s 手柄在这个元素上完全无效，也不产生位移 */
+    if (c.mode === 'lock-h' || c.mode === 'lock-h-min') {
       next.h = start.h;
       if (handle.indexOf('n') >= 0) next.y = start.y;
       if (handle.indexOf('s') >= 0) next.y = start.y;
@@ -10846,11 +12999,22 @@ body.dragging-file::after {
   };
 
   /* 一维元素上，有哪些手柄是**没有意义**的（点了不会有反应）。
-     覆盖层据此隐藏它们 —— 让用户看不到死按钮，比点了没反应好。 */
+     覆盖层据此隐藏它们 —— 让用户看不到死按钮，比点了没反应好。
+
+     线条类更彻底：8 个盒手柄 +「旋转」手柄**全部**隐藏，只留两个端点手柄。
+     理由：两点头模型里，盒子只是三个点的包围盒，改盒子不是用户想做的事；
+     他要把端点拖到哪儿去，直接拖那个点（见 06-ui 的 beginEndpointDrag）。
+     旋转对角度的影响，和「把某个端点拖过去」是同一件事 —— 拖端点就是旋转，
+     再挂一个旋转键只会让人以为线能被整条拧转，反而误导。
+     留一排盒手柄 / 旋转键只会让人拖了发现「整条线跟着缩放」而不是「这一端动了」。 */
+  var BOX_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
   E.deadHandles = function (node) {
+    var kind = kindOf(node);
+    if (LINE_KINDS[kind]) return BOX_HANDLES.concat(['rot']);
     var c = E.constraintOf(node);
     if (!c) return null;
-    if (c.mode === 'lock-h') return ['n', 's', 'nw', 'ne', 'sw', 'se'];
+    if (c.mode === 'lock-h' || c.mode === 'lock-h-min') return ['n', 's', 'nw', 'ne', 'sw', 'se'];
     return null;
   };
 
@@ -10890,68 +13054,396 @@ body.dragging-file::after {
 
   var NS = 'http://www.w3.org/2000/svg';
 
-  function pathFor(kind, w, h) {
-    var cy = h / 2;
-    var t = Math.min(SHAFT_T, Math.max(1, h / 3));
-    var hh = Math.min(HEAD_H, Math.max(2, h / 2 - 1));
-    var hw = Math.min(HEAD_W, Math.max(4, w / 2.5));
-    var n = function (v) { return Math.round(v * 100) / 100; };
-    var d;
-    if (kind === 'arrow') {
-      d = 'M0,' + n(cy - t / 2) +
-        'L' + n(w - hw) + ',' + n(cy - t / 2) +
-        'L' + n(w - hw) + ',' + n(cy - hh) +
-        'L' + n(w) + ',' + n(cy) +
-        'L' + n(w - hw) + ',' + n(cy + hh) +
-        'L' + n(w - hw) + ',' + n(cy + t / 2) +
-        'L0,' + n(cy + t / 2) + 'Z';
-    } else if (kind === 'dblarrow') {
-      d = 'M' + n(hw) + ',' + n(cy - t / 2) +
-        'L' + n(w - hw) + ',' + n(cy - t / 2) +
-        'L' + n(w - hw) + ',' + n(cy - hh) +
-        'L' + n(w) + ',' + n(cy) +
-        'L' + n(w - hw) + ',' + n(cy + hh) +
-        'L' + n(w - hw) + ',' + n(cy + t / 2) +
-        'L' + n(hw) + ',' + n(cy + t / 2) +
-        'L' + n(hw) + ',' + n(cy + hh) +
-        'L0,' + n(cy) +
-        'L' + n(hw) + ',' + n(cy - hh) + 'Z';
-    } else {
-      /* 直线：一条横杆 */
-      d = 'M0,' + n(cy - t / 2) + 'L' + n(w) + ',' + n(cy - t / 2) +
-        'L' + n(w) + ',' + n(cy + t / 2) + 'L0,' + n(cy + t / 2) + 'Z';
+  /* ── 两点头模型：线条 / 曲线 / 连接线 ──────────────────────────────
+     参考实现（Bento slides）把这类图形统一建模成 shape:"path"：
+     一个 SVG `d` 描述几何 + `pathBox` 描述它的包围盒。
+     这里用**同一思路**，但几何不存 `d`、存「两个端点 + 可选拐点」，
+     点一律是盒子内的 0~100 比例：
+
+       data-wd-p1   = "[x,y]"   起点
+       data-wd-p2   = "[x,y]"   终点
+       data-wd-bend = "[x,y]"   拐点（曲线 / 连接线才有）
+
+     为什么用比例点而不是 `d`：
+       · 缩放时**不用重算坐标** —— 比例点跟着盒子自动缩放（自由绘制 / 多边形
+         用的也是这套，见 scaledPoints）；
+       · 「两点」正好是用户要拖的东西，命中测试与拖动都只需要读写两个点；
+       · 盒子 = 这三个点的包围盒，于是斜线天然成立 —— 原来 height 被锁死、
+         只能画水平线，正是「两点」这个模型缺位的表现。
+
+     ★ 顺带修掉一个真 bug：旧的 curve / connector 默认 `d` 是按 ~100×100 的
+     坐标空间写的（'M0,78 C34,10 66,10 100,78'），却配上了元素真实尺寸的
+     viewBox（620×150）—— 于是曲线只画在盒子左侧 16% 的地方。换成比例点之后
+     几何与盒子从一开始就是同一套坐标，这个错位不会再发生。 */
+  var LINE_KINDS = {
+    line: 1, arrow: 1, dblarrow: 1, curve: 1, connector: 1, connectorcurve: 1
+  };
+
+  /* 曲线族升级为三次贝塞尔：用两端各一条**切线手柄**（c1 / c2）代替旧的单一拐点。
+     · c1 挂在起点 p1 上、c2 挂在终点 p2 上；拖切线手柄 = 改该端的切线方向与长度（弯曲程度），
+       拖端点 = 改大小 / 位置。连接线（connector，肘形）不属于这一族，仍用 bend。 */
+  var CURVE_KINDS = { curve: 1, connectorcurve: 1 };
+
+  /* 默认两点（0~100 比例）。line / arrow / dblarrow 是水平线；
+     曲线起止贴底、拐点贴顶（一段上凸的弧）；连接线起止对角、拐点做肘。 */
+  var POINT_DEFAULTS = {
+    line:           { p1: [0, 50], p2: [100, 50], bend: null },
+    arrow:          { p1: [0, 50], p2: [100, 50], bend: null },
+    dblarrow:       { p1: [0, 50], p2: [100, 50], bend: null },
+    /* 曲线：起止贴底、拐点贴顶（一段上凸的弧）。c1/c2 由旧拐点 bend 等价派生：
+       二次→三次 = c1 = p1 + 2/3(bend-p1)，c2 = p2 + 2/3(bend-p2)。 */
+    curve:          { p1: [0, 92], p2: [100, 92], bend: [50, 6], c1: [33.33, 34.67], c2: [66.67, 34.67] },
+    connector:      { p1: [0, 90], p2: [100, 10], bend: [50, 90] },
+    connectorcurve: { p1: [0, 90], p2: [100, 10], bend: [50, 50], c1: [33.33, 63.33], c2: [66.67, 36.67] },
+  };
+
+  function parsePt(raw, fallback) {
+    if (raw) {
+      try {
+        var a = JSON.parse(raw);
+        if (Array.isArray(a) && a.length >= 2 && isFinite(a[0]) && isFinite(a[1])) {
+          return [Number(a[0]), Number(a[1])];
+        }
+      } catch (e) { /* 坏数据就退回默认，不抛 */ }
     }
+    return fallback ? [fallback[0], fallback[1]] : null;
+  }
+
+  E.isLineKind = function (kind) { return !!LINE_KINDS[kind]; };
+
+  /* 曲线族 = 需要展示 / 拖动两条切线手柄（c1 / c2）的线条类。 */
+  E.isCurveKind = function (kind) { return !!CURVE_KINDS[kind]; };
+
+  /* 多边形顶点集（0~100 比例），把每个点归一成 [x,y]。无 / 坏数据回退空数组。
+     覆盖层据此为每个顶点摆一个可拖手柄；拖顶点走 beginVertexDrag。 */
+  E.verticesOf = function (node) {
+    var raw = node && node.getAttribute ? node.getAttribute('data-wd-points') : null;
+    if (!raw) return [];
+    try {
+      var arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr.map(function (p) {
+        var x = Array.isArray(p) ? p[0] : (p && p.x);
+        var y = Array.isArray(p) ? p[1] : (p && p.y);
+        return [isFinite(x) ? x : 0, isFinite(y) ? y : 0];
+      });
+    } catch (e) { return []; }
+  };
+
+  function roundPt(p) { return [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]; }
+
+  /* 读一个线条元素的点集（0~100 比例）。返回 null 表示不是线条类。
+     曲线族额外带一对切线手柄 c1 / c2（三次贝塞尔的两个控制点）。 */
+  E.linePointsOf = function (node) {
+    var kind = kindOf(node);
+    var def = POINT_DEFAULTS[kind];
+    if (!def) return null;
+    var lp = {
+      p1: parsePt(node.getAttribute('data-wd-p1'), def.p1),
+      p2: parsePt(node.getAttribute('data-wd-p2'), def.p2),
+      bend: def.bend ? parsePt(node.getAttribute('data-wd-bend'), def.bend) : null,
+      c1: null,
+      c2: null,
+    };
+    if (CURVE_KINDS[kind]) {
+      var c1raw = node.getAttribute('data-wd-c1');
+      var c2raw = node.getAttribute('data-wd-c2');
+      if (c1raw && c2raw) {
+        lp.c1 = parsePt(c1raw, def.c1);
+        lp.c2 = parsePt(c2raw, def.c2);
+      } else {
+        /* 迁移：旧曲线只有一个拐点 bend（等价于二次贝塞尔控制点）。
+           把它换算成三次贝塞尔的两个控制点 —— 形状完全一致，只是换成
+           两端各一条可独立拖动的切线手柄。落一次盘，之后 c1/c2 就是真源。 */
+        var b = lp.bend || [def.c1 ? def.c1[0] : 50, def.c1 ? def.c1[1] : 30];
+        var d1 = [lp.p1[0] + (b[0] - lp.p1[0]) * 2 / 3, lp.p1[1] + (b[1] - lp.p1[1]) * 2 / 3];
+        var d2 = [lp.p2[0] + (b[0] - lp.p2[0]) * 2 / 3, lp.p2[1] + (b[1] - lp.p2[1]) * 2 / 3];
+        lp.c1 = roundPt(d1);
+        lp.c2 = roundPt(d2);
+        node.setAttribute('data-wd-c1', JSON.stringify(lp.c1));
+        node.setAttribute('data-wd-c2', JSON.stringify(lp.c2));
+      }
+    }
+    return lp;
+  };
+
+  /* 比例点 → 当前盒子里的绝对坐标 */
+  function absPoints(node, w, h) {
+    var lp = E.linePointsOf(node);
+    if (!lp) return null;
+    var toAbs = function (p) { return [(p[0] / 100) * w, (p[1] / 100) * h]; };
+    return {
+      p1: toAbs(lp.p1),
+      p2: toAbs(lp.p2),
+      bend: lp.bend ? toAbs(lp.bend) : null,
+      c1: lp.c1 ? toAbs(lp.c1) : null,
+      c2: lp.c2 ? toAbs(lp.c2) : null,
+    };
+  }
+
+  /* 纯描边的形状（曲线、连接线、笔迹、多边形）：填充透明、只画 stroke。
+     直线 / 箭头 / 双箭头不在此列 —— 它们是**填充**的杆 + 固定像素箭头头。 */
+  var STROKE_KINDS = { curve: 1, connector: 1, connectorcurve: 1, drawn: 1, poly: 1 };
+
+  function strokeW(node) {
+    var raw = node.style.borderTopWidth || node.style.borderWidth || '';
+    var v = parseFloat(raw);
+    if (!(v > 0)) v = 3;
+    return Math.max(1, Math.min(40, v));
+  }
+
+  function pointsOf(node) {
+    var raw = node.getAttribute('data-wd-points');
+    if (!raw) return [];
+    try {
+      var a = JSON.parse(raw);
+      return Array.isArray(a) ? a : [];
+    } catch (e) { return []; }
+  }
+
+  /* 比例点 → 绝对坐标串。
+     自由绘制与多边形都按**原始包围盒**存 0~100 的比例点，
+     这里再乘回当前宽高，所以缩放 / 拉伸都不会让笔画错位。 */
+  function scaledPoints(node) {
+    var sz = sizeOf(node);
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    return pointsOf(node).map(function (p) {
+      var x = Array.isArray(p) ? p[0] : p.x;
+      var y = Array.isArray(p) ? p[1] : p.y;
+      x = isFinite(x) ? x : 0;
+      y = isFinite(y) ? y : 0;
+      return { x: (x / 100) * sz.w, y: (y / 100) * sz.h };
+    });
+  }
+
+  /* 笔迹用二次贝塞尔把相邻点连成平滑曲线（取相邻两点的中点作为曲线终点，
+     原始点作为控制点）—— 直接 lineTo 在鼠标采样稀疏时会画出折线感。 */
+  function drawnPath(node) {
+    var ps = scaledPoints(node);
+    if (ps.length < 2) return '';
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    var d = 'M' + n(ps[0].x) + ',' + n(ps[0].y);
+    for (var i = 1; i < ps.length - 1; i++) {
+      var mx = (ps[i].x + ps[i + 1].x) / 2;
+      var my = (ps[i].y + ps[i + 1].y) / 2;
+      d += ' Q' + n(ps[i].x) + ',' + n(ps[i].y) + ' ' + n(mx) + ',' + n(my);
+    }
+    d += ' L' + n(ps[ps.length - 1].x) + ',' + n(ps[ps.length - 1].y);
     return d;
   }
 
-  /* 按当前尺寸和颜色重画这个线条元素。返回 true 表示确实重画了。 */
+  function polyPath(node) {
+    var ps = scaledPoints(node);
+    if (ps.length < 3) return '';
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    var d = 'M' + n(ps[0].x) + ',' + n(ps[0].y);
+    for (var i = 1; i < ps.length; i++) d += ' L' + n(ps[i].x) + ',' + n(ps[i].y);
+    return d + ' Z';
+  }
+
+  /* 直线 / 箭头的填充路径（杆 + 固定像素箭头头），沿 p1→p2 方向摆。
+     箭头头是**固定像素**的，不会随长度一起拉长 —— 长箭头的头不该变成大三角。
+     整个图形在 p1→p2 的局部坐标系里算（u = 沿线单位向量，n = 法线），
+     所以斜线也能正确摆头。
+     thick 是杆厚，由 data-wd-w 传进来（检查器里改「边框宽度」就是它）。 */
+  function arrowPathAlong(a, b, hasStart, hasEnd, thick) {
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var len = Math.sqrt(dx * dx + dy * dy);
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    if (len < 1.5) {
+      /* 退化成一点：给一个极小的方块，别画出畸形箭头 */
+      return 'M' + n(a[0] - 1) + ',' + n(a[1] - 1) + ' L' + n(a[0] + 1) + ',' + n(a[1] - 1)
+        + ' L' + n(a[0] + 1) + ',' + n(a[1] + 1) + ' L' + n(a[0] - 1) + ',' + n(a[1] + 1) + ' Z';
+    }
+    var ux = dx / len, uy = dy / len;
+    var nx = -uy, ny = ux;
+    var t = Math.min(thick || SHAFT_T, Math.max(1, len / 3));
+    var hw = Math.min(HEAD_W, Math.max(4, len / 2.5));   /* 箭头沿线的长度 */
+    var hh = Math.min(HEAD_H, Math.max(2, len / 4));     /* 箭头半高 */
+    var h = Math.max(0.5, t / 2);
+    /* 局部 (沿, 法) → 绝对坐标串 */
+    var pt = function (along, side) {
+      return n(a[0] + ux * along + nx * side) + ',' + n(a[1] + uy * along + ny * side);
+    };
+    var parts = [];
+    var s0 = hasStart ? hw * 0.92 : 0;
+    var s1 = hasEnd ? len - hw * 0.92 : len;
+    /* 杆 */
+    parts.push('M' + pt(s0, -h) + ' L' + pt(s1, -h) + ' L' + pt(s1, h) + ' L' + pt(s0, h) + ' Z');
+    /* 终点箭头 */
+    if (hasEnd) parts.push('M' + pt(len, 0) + ' L' + pt(len - hw, -hh) + ' L' + pt(len - hw, hh) + ' Z');
+    /* 起点箭头（朝后） */
+    if (hasStart) parts.push('M' + pt(0, 0) + ' L' + pt(hw, -hh) + ' L' + pt(hw, hh) + ' Z');
+    return parts.join(' ');
+  }
+
+  /* 直线：一条有厚度的杆。p1/p2 是中心线的两端，
+     杆由中心线向两侧各偏 t/2 得到 —— 斜线时就是一个旋转过的矩形。 */
+  function barPathAlong(a, b, thickness) {
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var len = Math.sqrt(dx * dx + dy * dy);
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    var t = Math.max(1, thickness);
+    if (len < 0.5) return 'M' + n(a[0]) + ',' + n(a[1]) + ' L' + n(a[0]) + ',' + n(a[1] + t) + ' Z';
+    var ux = dx / len, uy = dy / len;
+    var nx = -uy, ny = ux;
+    var h = t / 2;
+    var pt = function (along, side) {
+      return n(a[0] + ux * along + nx * side) + ',' + n(a[1] + uy * along + ny * side);
+    };
+    return 'M' + pt(0, -h) + ' L' + pt(len, -h) + ' L' + pt(len, h) + ' L' + pt(0, h) + ' Z';
+  }
+
+  /* 两点（+拐点）图形的路径。thick = 杆厚 / 线宽（来自 data-wd-w）。 */
+  function pointPath(node, kind, w, h, thick) {
+    var ap = absPoints(node, w, h);
+    if (!ap) return '';
+    var n = function (v) { return Math.round(v * 100) / 100; };
+    var p1 = ap.p1, p2 = ap.p2, bend = ap.bend, c1 = ap.c1, c2 = ap.c2;
+    var t = thick || SHAFT_T;
+
+    if (kind === 'line') {
+      /* 直线用「杆」而不是 stroke：保持填充语义，
+         这样 PPTX 导出 / 栅格化仍然把它当纯色块处理。 */
+      var len0 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      return barPathAlong(p1, p2, Math.min(t, Math.max(1, len0 / 3)));
+    }
+    if (kind === 'arrow') return arrowPathAlong(p1, p2, false, true, t);
+    if (kind === 'dblarrow') return arrowPathAlong(p1, p2, true, true, t);
+
+    if (kind === 'curve' || kind === 'connectorcurve') {
+      /* 三次贝塞尔：两端各一条切线手柄 c1 / c2 决定弯曲程度与方向，
+         端点 p1 / p2 决定大小与位置。缺 c1/c2（异常数据）时从 bend 派生兜底。 */
+      if (!c1 || !c2) {
+        var cb = bend || [(p1[0] + p2[0]) / 2, Math.min(p1[1], p2[1])];
+        c1 = [p1[0] + (cb[0] - p1[0]) * 2 / 3, p1[1] + (cb[1] - p1[1]) * 2 / 3];
+        c2 = [p2[0] + (cb[0] - p2[0]) * 2 / 3, p2[1] + (cb[1] - p2[1]) * 2 / 3];
+      }
+      return 'M' + n(p1[0]) + ',' + n(p1[1])
+        + ' C' + n(c1[0]) + ',' + n(c1[1])
+        + ' ' + n(c2[0]) + ',' + n(c2[1])
+        + ' ' + n(p2[0]) + ',' + n(p2[1]);
+    }
+    if (kind === 'connector') {
+      /* 肘形：先横到拐点的 x，再竖到拐点的 y，最后横到终点。
+         拐点只取 x 作「竖段在哪」，y 由两端决定 —— 这样拖动两端时
+         肘形仍然是对齐的直角，不会歪成斜线。 */
+      var bx = bend ? bend[0] : (p1[0] + p2[0]) / 2;
+      return 'M' + n(p1[0]) + ',' + n(p1[1])
+        + ' L' + n(bx) + ',' + n(p1[1])
+        + ' L' + n(bx) + ',' + n(p2[1])
+        + ' L' + n(p2[0]) + ',' + n(p2[1]);
+    }
+    return 'M' + n(p1[0]) + ',' + n(p1[1]) + ' L' + n(p2[0]) + ',' + n(p2[1]);
+  }
+
+  /* 路径生成表。
+     ⚠ 签名统一是 (node, w, h)：线条类要读元素上的比例点、drawn / poly 也是，
+     只给宽高不够。这里曾经把 node 参数省掉写成 function (w, h)，于是
+     syncLine 传进去的尺寸被当成 node 用，一插自由绘制就抛
+     「Cannot read properties of undefined (reading 'width')」。 */
+  var PATH_FOR = {
+    drawn: function (node) { return drawnPath(node); },
+    poly: function (node) { return polyPath(node); },
+  };
+  ['line', 'arrow', 'dblarrow', 'curve', 'connector', 'connectorcurve'].forEach(function (k) {
+    PATH_FOR[k] = function (node, w, h) {
+      return pointPath(node, k, w, h, parseFloat(node.getAttribute('data-wd-w')) || SHAFT_T);
+    };
+  });
+
+  /* 线条类的「颜色 / 粗细」存在 data-* 上，不放在 CSS 盒子上。
+     原因：线条的盒子必须保持透明（图形是里面那个 SVG 画的），
+     而 SVG 的 fill / stroke-width 又要跟着颜色与粗细走。
+     早期实现是「读 backgroundColor 当颜色、读 borderTopWidth 当粗细」，
+     但 syncLine 结尾要把盒子刷成透明 —— 那一步会把用户刚选的颜色一起抹掉，
+     于是**改完颜色只要再重画一次就弹回默认蓝**（实测第二次 syncLine 就回退）。
+     现在：data-wd-stroke / data-wd-w 是唯一真源，CSS 盒子只负责透明。
+     旧工程没有这两个属性，syncLine 会把 CSS 上的值**迁移**过来一次。 */
+  function paintOf(node) {
+    var stroke = node.getAttribute('data-wd-stroke');
+    if (!stroke) {
+      /* 迁移：旧文档把颜色写在 background-color 上 */
+      var legacy = fillOf(node);
+      stroke = legacy;
+      node.setAttribute('data-wd-stroke', stroke);
+    }
+    var w = parseFloat(node.getAttribute('data-wd-w'));
+    if (!(w > 0)) {
+      w = strokeW(node);          /* 迁移：旧文档把粗细写在 border-top-width 上 */
+      node.setAttribute('data-wd-w', String(w));
+    }
+    return { stroke: stroke, width: w };
+  }
+
+  /* 按当前尺寸和颜色重画这个线条 / 形状元素。返回 true 表示确实重画了。
+     两类渲染：
+       · 填充类（line / arrow / dblarrow）：路径被 fill 填充，d 里已经夹出杆厚；
+       · 描边类（curve / connector / connectorcurve / drawn / poly）：
+         路径是一条中心线，用 stroke + stroke-width 画，填充透明。 */
   E.syncLine = function (node) {
     var kind = kindOf(node);
-    if (kind !== 'line' && kind !== 'arrow' && kind !== 'dblarrow') return false;
+    if (!PATH_FOR[kind]) return false;
     var sz = sizeOf(node);
-    var fill = fillOf(node);
+    var paint = paintOf(node);
     var doc = node.ownerDocument;
-    var d = pathFor(kind, sz.w, sz.h);
+    var strokeMode = !!STROKE_KINDS[kind];
+    var d = PATH_FOR[kind](node, sz.w, sz.h);
+
     var svg = node.querySelector(':scope > svg');
     if (!svg) {
-      /* 直线不需要 svg：自身背景就是杆。但箭头 / 双箭头需要 */
-      if (kind === 'line') {
-        node.style.background = fill;
-        return true;
-      }
+      /* 直线原来靠「自身背景色 = 那根杆」画，不需要 svg。
+         换成两点头模型之后它可能是**斜的**，色块画不出斜杆 ——
+         所以和箭头一样改用 SVG 路径（一个旋转过的矩形）。 */
       svg = doc.createElementNS(NS, 'svg');
       svg.setAttribute('class', 'wd-line-svg');
       var p = doc.createElementNS(NS, 'path');
       svg.appendChild(p);
       node.appendChild(svg);
     }
+    /* ★ 内层 SVG 的定位/裁剪必须**写成内联样式**，不能靠 style.css 里的
+       `[data-wd-added="line"] > svg { position:absolute; overflow:visible }`。
+       舞台是 iframe：插入的元素活在**帧文档**里，而应用样式表挂在父页上，
+       那条规则根本匹配不到帧内的节点（getComputedStyle 实测是
+       position:static / display:inline / overflow:hidden）。
+       后果：inline 的 SVG 会按基线排版、被下推十几像素，再被元素盒子或
+       foreignObject 的高度裁掉 —— 8px 高的「直线」因此栅格化成全透明
+       （实测覆盖率 0%；同一个 SVG 单独渲染有 25%）。
+       所以这类元素的样式一律自带，和 addElement 里那套内联写法是同一个约定。 */
+    var ss = svg.style;
+    ss.position = 'absolute';
+    ss.left = '0';
+    ss.top = '0';
+    ss.overflow = 'visible';
+    ss.pointerEvents = 'none';
+    ss.display = 'block';
     var path = svg.firstChild;
     svg.setAttribute('viewBox', '0 0 ' + sz.w + ' ' + sz.h);
     svg.setAttribute('width', sz.w);
     svg.setAttribute('height', sz.h);
     path.setAttribute('d', d);
-    path.setAttribute('fill', fill);
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    if (strokeMode) {
+      /* 描边类图形：颜色走 stroke。其中 curve / connector / connectorcurve /
+         drawn 是**开放**线条，内部无「面」可填 → fill 恒为 none。
+         而 poly（多边形）是**闭合**图形，用户希望能填底色：填充色存在专属的
+         data-wd-fill 上（未设 = 不填充，回退 none），描边仍用 paint.stroke。
+         盒子背景保持透明（见下方），填充画在内层 path 上，两者不冲突。 */
+      var fillVal = 'none';
+      if (kind === 'poly') fillVal = node.getAttribute('data-wd-fill') || 'none';
+      path.setAttribute('fill', fillVal);
+      path.setAttribute('stroke', paint.stroke);
+      path.setAttribute('stroke-width', paint.width);
+    } else {
+      path.setAttribute('fill', paint.stroke);
+      path.setAttribute('stroke', 'none');
+    }
+    /* 盒子只负责定位：背景透明、边框透明。
+       边框宽度留着透明边框是为了让旧的 strokeW 迁移仍有值可读；
+       颜色/粗细的真源已经是 data-wd-stroke / data-wd-w。 */
     node.style.background = 'transparent';
+    node.style.borderColor = 'transparent';
     return true;
   };
 
@@ -11342,24 +13834,34 @@ body.dragging-file::after {
   var CHART_PALETTE = ['#3b6fd4', '#f7a600', '#3fa37a', '#d9534f', '#8a63d2', '#4aa3c7'];
   var CHART_FONT = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 
+  /* 右栏「配色」那一排色板直接用这套颜色 —— 图上用的与实际可选的是同一份定义，
+     不另抄一遍，避免以后改配色只改了一处。 */
+  E.chartPalette = function () { return CHART_PALETTE.slice(); };
+
+  /* 图表**背景色**：默认无（透明）。透明是有意选的默认值 ——
+     课件底板常常是深色或带渐变，烤成白底会变成一张贴上去的白纸。 */
+  var CHART_BG = ['#ffffff', '#f7f9fc', '#eef3fa', '#fff8e6', '#f0f7f2', '#fdecea', '#1e2a3a'];
+
+  E.chartBackgrounds = function () { return CHART_BG.slice(); };
+
   /* 内置示例数据。每张图表插进画布时都**带着自己的数据副本**
      （存在 data-wd-chart 属性里），双击就能改 —— 否则它只是一张烤死的 PNG。 */
   E.defaultChartData = function (kind) {
     if (kind === 'pie') {
       return {
-        kind: 'pie', title: '成绩构成', showLegend: true, showValues: true,
+        kind: 'pie', title: '成绩构成', showLegend: true, showValues: true, bgColor: '',
         labels: ['优秀', '良好', '及格', '待提高'],
-        series: [{ name: '占比', color: '#3b6fd4', data: [32, 38, 19, 11] }],
+        series: [{ name: '占比', color: '#3b6fd4', fillColor: '#3b6fd4', data: [32, 38, 19, 11] }],
       };
     }
     return {
       kind: kind === 'chartline' ? 'chartline' : 'bar',
       title: kind === 'chartline' ? '月度趋势' : '各月对比',
-      showLegend: true, showValues: false,
+      showLegend: true, showValues: false, bgColor: '',
       labels: ['一月', '二月', '三月', '四月', '五月', '六月'],
       series: [
-        { name: '本班', color: '#3b6fd4', data: [62, 78, 71, 86, 93, 88] },
-        { name: '年级均', color: '#f7a600', data: [55, 61, 64, 70, 74, 79] },
+        { name: '本班', color: '#3b6fd4', fillColor: '#3b6fd4', data: [62, 78, 71, 86, 93, 88] },
+        { name: '年级均', color: '#f7a600', fillColor: '#f7a600', data: [55, 61, 64, 70, 74, 79] },
       ],
     };
   };
@@ -11386,19 +13888,43 @@ body.dragging-file::after {
       /* 补齐 / 截断到分类数，避免柱子数与横轴标签数对不上 */
       while (vals.length < labels.length) vals.push(0);
       vals = vals.slice(0, labels.length);
+      var c = s.color || CHART_PALETTE[i % CHART_PALETTE.length];
       return {
         name: String(s.name == null || s.name === '' ? base.series[i % base.series.length].name : s.name),
-        color: s.color || CHART_PALETTE[i % CHART_PALETTE.length],
+        color: c,
+        /* fillColor：柱体填充 / 饼图扇区。默认等于 stroke 色 —— 新插入的图
+           跟旧行为一致；想分开调就在右栏改。 */
+        fillColor: /^(#[0-9a-f]{3}|#[0-9a-f]{6}|rgba?\([\d\s.,%]+\))$/i.test(String(s.fillColor || ''))
+          ? String(s.fillColor) : c,
         data: vals,
       };
     });
     if (!series.length) series = base.series.slice();
 
+    /* 逐系列的画法（柱状 / 折线）。同一张图里可以混用：
+       「总量用柱、趋势用线」是常见诉求，一个全局开关做不到。
+       饼图忽略这个字段（只有一条数据）。 */
+    var srcKind = Array.isArray(raw.seriesKind) ? raw.seriesKind : [];
+    var seriesKind = series.map(function (s, i) {
+      /* 老数据 / 默认数据里没有 seriesKind —— 那就按 kind 推：整张图是折线就是折线 */
+      var k = srcKind[i];
+      if (k === 'chartline' || k === 'bar') return k;
+      return kind === 'chartline' ? 'chartline' : 'bar';
+    });
+    /* 整个图表的 kind：全是折线才算折线图，其余按柱/线混合画 */
+    var allLine = seriesKind.length > 0 && seriesKind.every(function (k) { return k === 'chartline'; });
+    var outKind = kind === 'pie' ? 'pie' : (allLine ? 'chartline' : 'bar');
+
     return {
-      kind: kind, title: String(raw.title == null ? base.title : raw.title),
+      kind: outKind, title: String(raw.title == null ? base.title : raw.title),
+      /* 背景色默认空串 = 透明。非空才画底色。
+         只认 #rgb/#rrggbb 与 rgb()/rgba()，别的一律当透明 —— 这个值会直接进
+         canvas.fillStyle，也让 data-wd-chart 更干净。 */
+      bgColor: /^(#[0-9a-f]{3}|#[0-9a-f]{6}|rgba?\([\d\s.,%]+\))$/i.test(String(raw.bgColor || ''))
+        ? String(raw.bgColor) : '',
       showLegend: raw.showLegend !== false,
       showValues: !!raw.showValues,
-      labels: labels, series: series,
+      labels: labels, series: series, seriesKind: seriesKind,
     };
   };
 
@@ -11487,8 +14013,12 @@ body.dragging-file::after {
     var w = canvas.width, h = canvas.height;
     var ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
+    /* 背景色：只在用户选了颜色时才铺底。
+       默认透明 —— 导出的 PNG 带 alpha，贴在深色课件底板上不会出现一块白纸。 */
+    if (d.bgColor) {
+      ctx.fillStyle = d.bgColor;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     var series = d.series;
     drawTitle(ctx, d.title, w);
@@ -11496,6 +14026,11 @@ body.dragging-file::after {
     /* ── 饼图 ───────────────────────────────────────────── */
     if (kind === 'pie') {
       var vals = series[0].data.slice(0, d.labels.length);
+      /* 扇区颜色：按用户给的首色（fillColor 优先，色板对齐失败时回退到 color）开始轮转。 */
+      var pStart = series[0].fillColor || series[0].color;
+      var pIdx = CHART_PALETTE.indexOf(pStart);
+      if (pIdx < 0) pIdx = 0;
+      var sliceColor = function (i) { return CHART_PALETTE[(pIdx + i) % CHART_PALETTE.length]; };
       var total = vals.reduce(function (a, b) { return a + b; }, 0) || 1;
       var areaTop = CHART_HEAD, areaH = h - CHART_HEAD - CHART_LEGEND;
       var cx = w * 0.34, cy = areaTop + areaH / 2;
@@ -11508,7 +14043,7 @@ body.dragging-file::after {
         ctx.moveTo(cx, cy);
         ctx.arc(cx, cy, r, a0, a1);
         ctx.closePath();
-        ctx.fillStyle = CHART_PALETTE[i % CHART_PALETTE.length];
+        ctx.fillStyle = sliceColor(i);
         ctx.fill();
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
@@ -11519,7 +14054,7 @@ body.dragging-file::after {
       if (d.showLegend) {
         var items = d.labels.map(function (lb, i) {
           return {
-            color: CHART_PALETTE[i % CHART_PALETTE.length],
+            color: sliceColor(i),
             name: lb,
             right: '  ' + vals[i],
             tail: Math.round(vals[i] / total * 100) + '%',
@@ -11548,7 +14083,10 @@ body.dragging-file::after {
       return;
     }
 
-    /* ── 柱状图 / 折线图 ──────────────────────────────────── */
+    /* ── 柱状图 / 折线图 ──
+       逐系列判断画法：一个系列可以是柱、另一个是线。
+       两种画法共用同一个格心 x（`pad.l + pw*(i+.5)/n`），所以混着画也严丝合缝；
+       折线数据点落在格心而不是两端，与横轴标签永远对齐。 */
     var pad = { l: 60, r: 24, t: CHART_HEAD + 14, b: 46 + CHART_LEGEND };
     var pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
     var maxV = niceMax(Math.max.apply(null, series.reduce(function (a, s) { return a.concat(s.data); }, [0])));
@@ -11565,14 +14103,65 @@ body.dragging-file::after {
       ctx.fillText(lb, cx, pad.t + ph + 10);
     });
 
-    if (kind === 'bar') {
-      var slot = pw / n;
-      var bw = Math.min(34, slot / (series.length + 1));
-      series.forEach(function (s, si) {
-        ctx.fillStyle = s.color;
+    var kindAt = function (si) {
+      return (d.seriesKind && d.seriesKind[si]) === 'chartline' ? 'chartline' : 'bar';
+    };
+    /* 柱宽按**柱系列**的条数算：线系列不占横向位置。
+       否则「一根柱 + 一根线」时柱只占半格，看着像没对齐。 */
+    var barCount = 0;
+    series.forEach(function (s, si) { if (kindAt(si) === 'bar') barCount++; });
+    if (!barCount) barCount = 1;
+    var slot = pw / n;
+    var bw = Math.min(34, slot / (barCount + 1));
+    var barSeen = 0;
+
+    series.forEach(function (s, si) {
+        /* ── 折线系列 ── */
+        if (kindAt(si) === 'chartline') {
+          var lstep = pw / n;
+          var lx0 = pad.l + lstep * .5;
+          ctx.strokeStyle = s.color;
+          ctx.lineWidth = 3;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          s.data.forEach(function (v, i) {
+            var cx = lx0 + lstep * i, cy = pad.t + ph - ph * v / maxV;
+            if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+          });
+          ctx.stroke();
+          s.data.forEach(function (v, i) {
+            var cx = lx0 + lstep * i, cy = pad.t + ph - ph * v / maxV;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+            ctx.fillStyle = s.color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            if (d.showValues) {
+              ctx.fillStyle = '#3c4a5e';
+              ctx.font = '600 15px ' + CHART_FONT;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(String(v), cx, cy - 9);
+            }
+          });
+          return;
+        }
+
+        /* ── 柱状系列 ──
+           横向位置由「第几根柱」决定，不看系列下标 —— 线系列不占横向位置。
+           fillColor = 柱体填充，color = 描边（线/值标签）。分得开时能让
+           「深色描边 + 浅色填充」这种配色。 */
+        var off = (barSeen - (barCount - 1) / 2) * (bw + 5);
+        barSeen++;
         s.data.forEach(function (v, i) {
+          /* 每根柱都显式设色：值标签会把 fillStyle 改成深色，不在这里重置
+             就会「第一根对、后面全变深色」——正是勾选「显示数值」后的现象。 */
+          ctx.fillStyle = s.fillColor || s.color;
           var bh = Math.max(1, ph * v / maxV);
-          var cx = pad.l + slot * (i + .5) + (si - (series.length - 1) / 2) * (bw + 5) - bw / 2;
+          var cx = pad.l + slot * (i + .5) + off - bw / 2;
           roundRect(ctx, cx, pad.t + ph - bh, bw, bh, Math.min(5, bw / 2));
           ctx.fill();
           if (d.showValues) {
@@ -11581,42 +14170,9 @@ body.dragging-file::after {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
             ctx.fillText(String(v), cx + bw / 2, pad.t + ph - bh - 5);
-            ctx.fillStyle = s.color;
           }
         });
-      });
-    } else {
-      var step = n > 1 ? pw / (n - 1) : 0;
-      series.forEach(function (s) {
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = 3;
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        s.data.forEach(function (v, i) {
-          var cx = pad.l + step * i, cy = pad.t + ph - ph * v / maxV;
-          if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
-        });
-        ctx.stroke();
-        s.data.forEach(function (v, i) {
-          var cx = pad.l + step * i, cy = pad.t + ph - ph * v / maxV;
-          ctx.beginPath();
-          ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-          ctx.fillStyle = s.color;
-          ctx.fill();
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          if (d.showValues) {
-            ctx.fillStyle = '#3c4a5e';
-            ctx.font = '600 15px ' + CHART_FONT;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(String(v), cx, cy - 9);
-          }
-        });
-      });
-    }
+    });
 
     if (d.showLegend) {
       drawLegend(ctx, series.map(function (s) { return { color: s.color, name: s.name }; }),
@@ -11624,6 +14180,410 @@ body.dragging-file::after {
     }
   };
 
+})(typeof window !== 'undefined' ? window : globalThis);
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   08-draw.js
+   ────────────────────────────────────────────────────────────────────────── */
+/* ============================================================================
+   画布绘制工具：自由绘制 · 多边形
+   ----------------------------------------------------------------------------
+   这两个形状没法像矩形那样「插一个默认值再拖手柄」：它们的几何是**画出来的**。
+       · 自由绘制：按住拖，笔迹跟着指针走，松开成图；
+       · 多边形：逐点点出顶点，双击 / 回车 / 点回起点收口。
+
+   为什么绘制态单独一个模块，而不是塞进 06-ui：
+   06-ui 已经背着面板、检查器、右键菜单一整套；绘制是「一段有开始有结束的
+   交互流程」，它自己管监听、预览与收尾，边界清楚，单独放更好读。
+
+   两条实现要点：
+
+   ① 监听挂在**帧文档**上，坐标直接用 ev.clientX/clientY。
+      舞台是 1920×1080 的 iframe 套 transform:scale，帧内指针事件的
+      clientX/clientY 就是帧内 CSS 像素（= 画布坐标）。
+      这一层与 06-ui 里 pickAt / 框选桥接的约定完全一致，
+      不要拿父页坐标来做换算，否则缩放一变就画歪。
+
+   ② 预览层放在父页的 .overlay 里，**不写进帧文档**。
+      帧文档里的每个节点都会被同步进工程文件、也会被撤销栈记录；
+      把一根临时的预览线留在里面，撤销一次就会看到它「变实」。
+      .overlay 本身就是画布坐标系、跟着 .stage 一起缩放，正好拿来预览。
+      （它带 .overlay > * { pointer-events:auto }，所以预览 SVG 要显式关掉指针事件，
+        否则整块画布都点不动。）
+   ========================================================================== */
+(function (global) {
+  var WD = global.WD = global.WD || {};
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  /* 相邻采样点的最小间距（画布像素）：鼠标事件比手抖密得多，不抽稀的话
+     一笔就能存下几百个点，工程文件与序列化都会明显变重。 */
+  var MIN_STEP = 6;
+  /* 一笔 / 一个多边形至少要有这么大的包围盒才值得落地，否则就是误点一下 */
+  var MIN_BOX = 6;
+
+  /* 闭合判定的容差（画布像素）：点回起点附近就算收口 */
+  var CLOSE_SNAP = 18;
+
+  /* 「双击 / 点回起点」闭合的冷却窗口（ms）：
+     闭合发生在双击的**第一下**（点回起点→收口），但浏览器随后还会派发
+     第二下 pointerdown 与一次 dblclick。若不管，第二下就会从**同一个起点**
+     又开出一条新多边形（正是「闭合后从某一点继续绘图」那个 bug），
+     dblclick 再把这个只有 1 点的残株判成「至少 3 顶点」弹错误提示。
+     窗口取略大于系统双击间隔，足以吞掉同一次双击的余波，又不影响用户
+     稍后重新起手画下一个多边形。 */
+  var CLOSE_COOLDOWN = 350;
+
+  function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+
+  function DrawTool() {
+    this.tool = null;
+    this.pts = [];
+    this.dragging = false;
+    this.preview = null;
+    this.svg = null;
+    this.path = null;      /* 已落定的边（多边形折线 / 自由绘制笔迹） */
+    this.band = null;      /* 橡皮筋：多边形「最后一个顶点 → 当前指针」的在途边 */
+    this.dots = null;
+    this.cursor = null;    /* 当前指针位置（画布坐标），多边形橡皮筋用 */
+    this.firstDot = null;  /* 起点圆点引用，靠近时高亮「点这里闭合」 */
+    this.last = null;
+    this.closedAt = 0;     /* 上一次多边形成功闭合的时间戳，用于吞掉双击余波 */
+    this.bound = null;
+  }
+
+  /* 桥（由 06-ui 在初始化时装上）：
+       stage / doc / root / overlay —— 舞台访问
+       create / hint / done        —— 落地元素与提示
+     拿不到桥就什么都不做，绝不抛异常把整个应用带下去。 */
+  DrawTool.prototype._b = function () { return WD.drawBridge || null; };
+
+  DrawTool.prototype.active = function () { return !!this.tool; };
+
+  /* ══ 进入 / 退出绘制态 ══════════════════════════════════════════════ */
+
+  DrawTool.prototype.start = function (kind) {
+    var b = this._b();
+    if (!b) return false;
+    if (!b.root || !b.root()) { if (b.hint) b.hint('请先打开一份 HTML 或新建页面', 'warn'); return false; }
+    if (this.tool === kind) { this.stop(); return false; }   /* 再点一次 = 取消 */
+    this.stop();
+    this.tool = kind;
+    this.closedAt = 0;
+    this._bind();
+    if (b.setCursor) b.setCursor('crosshair');
+    if (b.hint) {
+      b.hint(kind === 'drawn'
+        ? '自由绘制：按住左键在画布上拖动画一笔（Esc 退出）'
+        : '多边形：逐点单击定顶点，双击 / 回车 / 点回起点闭合（Esc 退出）', 'info', 4200);
+    }
+    return true;
+  };
+
+  DrawTool.prototype.stop = function () {
+    var b = this._b();
+    this.tool = null;
+    this.dragging = false;
+    this.pts = []; this.cursor = null; this.last = null;
+    this._clearPreview();
+    this._unbind();
+    if (b && b.setCursor) b.setCursor('');
+  };
+
+  /* ══ 监听 ══════════════════════════════════════════════════════════ */
+
+  DrawTool.prototype._bind = function () {
+    if (this.bound) return;
+    var self = this;
+    var b = this._b();
+    if (!b || !b.doc) return;
+    var doc = b.doc();
+    if (!doc) return;
+    /* capture=true：抢在 onFramePointerDown（它会开始拖动元素）之前拿到事件，
+       并在 handleDown 里 stopPropagation，避免画一笔顺手把底下的元素拖走。 */
+    var down = function (e) { self.handleDown(e); };
+    var move = function (e) { self.handleMove(e); };
+    var up = function (e) { self.handleUp(e); };
+    var dbl = function (e) { self.handleDblClick(e); };
+    doc.addEventListener('pointerdown', down, true);
+    doc.addEventListener('pointermove', move, true);
+    doc.addEventListener('pointerup', up, true);
+    doc.addEventListener('dblclick', dbl, true);
+    global.addEventListener('keydown', this._onKey = function (e) {
+      if (!self.tool) return;
+      if (e.key === 'Escape') { self.stop(); if (b.hint) b.hint('已退出绘制', 'info', 1600); }
+      else if (e.key === 'Enter' && self.tool === 'poly') { self.finish('enter'); }
+    }, true);
+    this.bound = { doc: doc, down: down, move: move, up: up, dbl: dbl };
+  };
+
+  DrawTool.prototype._unbind = function () {
+    var b = this.bound;
+    if (!b) return;
+    try {
+      b.doc.removeEventListener('pointerdown', b.down, true);
+      b.doc.removeEventListener('pointermove', b.move, true);
+      b.doc.removeEventListener('pointerup', b.up, true);
+      b.doc.removeEventListener('dblclick', b.dbl, true);
+    } catch (e) { /* 文档可能已经换掉了 */ }
+    if (this._onKey) global.removeEventListener('keydown', this._onKey, true);
+    this._onKey = null;
+    this.bound = null;
+  };
+
+  /* ══ 指针 ══════════════════════════════════════════════════════════ */
+
+  DrawTool.prototype.handleDown = function (e) {
+    if (!this.tool || e.button !== 0) return;
+    /* 编辑文字时不抢事件，否则在文本框里点一下都会开始画 */
+    var b = this._b();
+    if (b && b.isEditing && b.isEditing()) return;
+    /* 刚闭合：吞掉同一次双击的第二下，避免从起点又开一条新多边形 */
+    if (this.tool === 'poly' && Date.now() - this.closedAt < CLOSE_COOLDOWN) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.tool === 'drawn') {
+      this.dragging = true;
+      this.pts = [[e.clientX, e.clientY]];
+      this.last = { x: e.clientX, y: e.clientY };
+      this.cursor = [e.clientX, e.clientY];
+      this._renderCommitted(false);
+    } else {
+      this.addCorner(e.clientX, e.clientY);
+    }
+  };
+
+  DrawTool.prototype.handleMove = function (e) {
+    if (!this.tool) return;
+    if (this.tool === 'drawn') {
+      if (!this.dragging) return;
+      e.preventDefault();
+      var dx = e.clientX - this.last.x, dy = e.clientY - this.last.y;
+      /* 抽稀：距离太近的点不记。1px 抖一下也存一个点，一笔能存几百个 */
+      if (dx * dx + dy * dy < MIN_STEP * MIN_STEP) return;
+      this.last = { x: e.clientX, y: e.clientY };
+      this.pts.push([e.clientX, e.clientY]);
+      this.cursor = [e.clientX, e.clientY];
+      this._renderCommitted(false);
+    } else if (this.tool === 'poly') {
+      /* 多边形：指针移动只更新「橡皮筋」那条在途边，不重画已落定的折线 */
+      this.cursor = [e.clientX, e.clientY];
+      this._renderBand();
+    }
+  };
+
+  DrawTool.prototype.handleUp = function (e) {
+    if (!this.tool || this.tool !== 'drawn' || !this.dragging) return;
+    e.preventDefault();
+    this.dragging = false;
+    this.finish(e.clientX, e.clientY);
+  };
+
+  /* 双击闭合多边形。dblclick 在帧文档上也会触发 onFrameDblClick（进文字编辑），
+     所以这里必须抢在它前面停掉 —— 否则「双击闭合」会顺手在底下的元素上进入编辑。 */
+  DrawTool.prototype.handleDblClick = function (e) {
+    if (!this.tool || this.tool !== 'poly') return;
+    e.preventDefault();
+    e.stopPropagation();
+    /* 刚闭合：这次 dblclick 只是同一次双击的收尾，不能再 finish 那 1 点残株 */
+    if (Date.now() - this.closedAt < CLOSE_COOLDOWN) return;
+    this.finish('dblclick');
+  };
+
+  /* 多边形：加一个顶点。点回起点附近就收口。 */
+  DrawTool.prototype.addCorner = function (x, y) {
+    if (this.pts.length >= 3 && this._nearFirst(x, y)) { this.finish('close'); return; }
+    this.pts.push([x, y]);
+    this.cursor = [x, y];
+    /* 新顶点落下：把这条边「画出来」（animate=true 触发描边动画），再挂橡皮筋 */
+    this._renderCommitted(true);
+    this._renderBand();
+  };
+
+  /* 指针 / 落点是否落在起点附近（收口容差内）。 */
+  DrawTool.prototype._nearFirst = function (x, y) {
+    if (!this.pts.length) return false;
+    var f = this.pts[0], dx = x - f[0], dy = y - f[1];
+    return dx * dx + dy * dy <= CLOSE_SNAP * CLOSE_SNAP;
+  };
+
+  /* 去掉**连续**的近似同点。双击闭合会把同一个坐标派发两次（两下 pointerdown
+     各 push 一次），不清掉多边形末尾就会叠着两个重合顶点。阈值取约 1.2px，
+     远小于自由绘制的抽稀间距（MIN_STEP=6）与正常手点，不会误删真实顶点。 */
+  DrawTool.prototype._dedupe = function (pts) {
+    if (!pts || pts.length < 2) return pts || [];
+    var out = [pts[0]];
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i], q = out[out.length - 1];
+      var dx = p[0] - q[0], dy = p[1] - q[1];
+      if (dx * dx + dy * dy <= 1.5) continue;
+      out.push(p);
+    }
+    return out;
+  };
+
+  /* ══ 收尾：比例化 → 交给 06-ui 落地 ═════════════════════════════════ */
+
+  DrawTool.prototype.finish = function (why) {
+    var b = this._b();
+    var pts = this._dedupe(this.pts);
+    this.pts = []; this.cursor = null; this.last = null; this.dragging = false;
+    this._clearPreview();
+    if (!b || !b.create) return;
+
+    var kind = this.tool;
+    var need = kind === 'poly' ? 3 : 2;
+    if (!pts || pts.length < need) {
+      /* 多边形点不够（只点了 1~2 下）：不报错，静默丢弃即可 —— 用户本来就可能改主意 */
+      if (kind === 'poly' && why !== 'escape') b.hint('多边形至少要 3 个顶点', 'warn', 2000);
+      return;
+    }
+
+    /* 包围盒 → 0~100 的比例点。存比例而不是绝对坐标，是为了让元素缩放 /
+       换画布尺寸之后笔迹依然贴合自己的边框（见 07-elements 的 scaledPoints）。 */
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      if (pts[i][0] < minX) minX = pts[i][0];
+      if (pts[i][1] < minY) minY = pts[i][1];
+      if (pts[i][0] > maxX) maxX = pts[i][0];
+      if (pts[i][1] > maxY) maxY = pts[i][1];
+    }
+    var bw = Math.max(MIN_BOX, maxX - minX);
+    var bh = Math.max(MIN_BOX, maxY - minY);
+    var norm = pts.map(function (p) {
+      var x = clamp01((p[0] - minX) / bw) * 100;
+      var y = clamp01((p[1] - minY) / bh) * 100;
+      return [Math.round(x * 100) / 100, Math.round(y * 100) / 100];
+    });
+
+    b.create({
+      kind: kind,
+      points: norm,
+      x: Math.round(minX),
+      y: Math.round(minY),
+      w: Math.round(bw),
+      h: Math.round(bh),
+    });
+    /* 记下落定时刻：若这次闭合是「双击起点」触发的，紧随其后的第二下
+       pointerdown / dblclick 会被 handleDown、handleDblClick 的冷却窗口吞掉，
+       不会从同一个起点又开一条新多边形。 */
+    if (kind === 'poly') this.closedAt = Date.now();
+    if (b.hint) {
+      b.hint(kind === 'drawn' ? '已添加笔迹' : '已添加多边形（' + norm.length + ' 个顶点）', 'ok', 1800);
+    }
+    /* 自由绘制保持激活：连着画几笔不用反复点菜单。
+       多边形则画完一个就退出绘制态 —— 用户希望「下一个要再点一次」，
+       避免闭合后随手一停又多冒出一个顶点。 */
+    if (kind === 'poly') this.stop();
+  };
+
+  /* ══ 预览层 ═════════════════════════════════════════════════════════ */
+
+  DrawTool.prototype._ensurePreview = function () {
+    if (this.svg && this.svg.parentNode) return true;
+    var b = this._b();
+    var host = b && b.overlay ? b.overlay() : null;
+    if (!host || !b.size) return false;
+    var sz = b.size();
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'wd-draw-preview');
+    svg.setAttribute('width', sz.w);
+    svg.setAttribute('height', sz.h);
+    svg.setAttribute('viewBox', '0 0 ' + sz.w + ' ' + sz.h);
+    svg.style.pointerEvents = 'none';   /* .overlay > * 默认 auto，必须显式关掉 */
+    var path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('class', 'wd-draw-path');
+    var band = document.createElementNS(SVG_NS, 'path');
+    band.setAttribute('class', 'wd-draw-band');
+    var dots = document.createElementNS(SVG_NS, 'g');
+    svg.appendChild(path);
+    svg.appendChild(band);
+    svg.appendChild(dots);
+    host.appendChild(svg);
+    this.svg = svg; this.path = path; this.band = band; this.dots = dots;
+    return true;
+  };
+
+  /* ── 已落定的边 + 顶点 ──
+     ★ 关键修复：以前这里读的是 this.px，而多边形只在 this.pts 上加点，
+     px 从头到尾是空数组 —— 于是逐点点顶点时画布上「什么都不显示」，
+     用户点了几下看不到任何折线与圆点，以为工具坏了。改成只认 this.pts。 */
+  DrawTool.prototype._renderCommitted = function (animate) {
+    if (!this._ensurePreview()) return;
+    var pts = this.pts || [];
+    var r = function (v) { return Math.round(v * 10) / 10; };
+    if (!pts.length) { this.path.setAttribute('d', ''); this.dots.innerHTML = ''; this.firstDot = null; return; }
+
+    var d = 'M' + r(pts[0][0]) + ',' + r(pts[0][1]);
+    for (var i = 1; i < pts.length; i++) d += ' L' + r(pts[i][0]) + ',' + r(pts[i][1]);
+    this.path.setAttribute('d', d);
+
+    /* 多边形每落一个顶点，把这条边「画出来」：dashoffset 由全长 → 0，
+       旧边随新边一起从头描一遍，视觉上就是线在一段段长出来。 */
+    if (animate && this.tool === 'poly' && pts.length >= 2 && this.path.getTotalLength) {
+      try {
+        var L = this.path.getTotalLength();
+        this.path.style.transition = 'none';
+        this.path.style.strokeDasharray = L + ' ' + L;
+        this.path.style.strokeDashoffset = String(L);
+        void this.path.getBoundingClientRect();        /* 强制回流，动画才从头开始 */
+        this.path.style.transition = 'stroke-dashoffset .24s cubic-bezier(.22,.61,.36,1)';
+        this.path.style.strokeDashoffset = '0';
+      } catch (e) { this.path.style.strokeDasharray = ''; this.path.style.strokeDashoffset = ''; }
+    }
+
+    /* 顶点圆点：起点画大一点（那是「点这里闭合」的目标），最新落点带个 pop */
+    this.dots.innerHTML = '';
+    this.firstDot = null;
+    if (this.tool === 'poly') {
+      for (var j = 0; j < pts.length; j++) {
+        var c = document.createElementNS(SVG_NS, 'circle');
+        c.setAttribute('cx', r(pts[j][0]));
+        c.setAttribute('cy', r(pts[j][1]));
+        c.setAttribute('r', j === 0 ? 6 : 3.5);
+        c.setAttribute('class', j === 0 ? 'wd-draw-dot first'
+          : (j === pts.length - 1 && animate ? 'wd-draw-dot pop' : 'wd-draw-dot'));
+        this.dots.appendChild(c);
+        if (j === 0) this.firstDot = c;
+      }
+    }
+  };
+
+  /* ── 橡皮筋：多边形「最后一个顶点 → 当前指针」的在途边 ──
+     这条边带 marching-dash 动画，就是用户要的「线段的动画过程」：
+     还没点下去之前，下一条款边跟着鼠标走，点下去才落地。 */
+  DrawTool.prototype._renderBand = function () {
+    if (!this._ensurePreview() || !this.band) return;
+    var pts = this.pts || [];
+    var r = function (v) { return Math.round(v * 10) / 10; };
+    if (this.tool === 'poly' && pts.length >= 1 && this.cursor) {
+      var last = pts[pts.length - 1];
+      var closing = pts.length >= 3 && this._nearFirst(this.cursor[0], this.cursor[1]);
+      var target = closing ? pts[0] : this.cursor;
+      this.band.setAttribute('d', 'M' + r(last[0]) + ',' + r(last[1]) + ' L' + r(target[0]) + ',' + r(target[1]));
+      this.band.classList.toggle('closing', closing);
+      this._markFirstNear(closing);
+    } else {
+      this.band.setAttribute('d', '');
+      this.band.classList.remove('closing');
+      this._markFirstNear(false);
+    }
+  };
+
+  DrawTool.prototype._markFirstNear = function (near) {
+    if (this.firstDot) this.firstDot.classList.toggle('near', !!near);
+  };
+
+  DrawTool.prototype._clearPreview = function () {
+    if (this.svg && this.svg.parentNode) this.svg.parentNode.removeChild(this.svg);
+    this.svg = null; this.path = null; this.band = null; this.dots = null; this.firstDot = null;
+  };
+
+  WD.DrawTool = DrawTool;
+  WD.drawTool = new DrawTool();
+
+  /* 模块加载完就把常用入口挂上，便于自动化脚本断言绘制态 */
+  WD.__drawReady = true;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>

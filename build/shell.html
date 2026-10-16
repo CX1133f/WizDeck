@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -88,33 +88,6 @@
     <path d="M8.4 11.4v.05"/>
   </symbol>
 
-  <!-- ══ 选中后的浮动工具条图标（与顶栏同一套描边参数） ══
-       这组原先用的是 Unicode 符号 ✎ ⧉ ⇧ ⇩ ✕。12.5px 下它们又细又小，
-       尤其 ⇧ ⇩ 两个箭头几乎只剩两笔，看不出是什么，
-       所以和顶栏一起换成内联线性 SVG。 -->
-  <symbol id="ic-edit-text" viewBox="0 0 16 16">
-    <path d="M10.6 2.9l2.5 2.5-6.6 6.6-2.9.5.5-2.9z"/>
-    <path d="M9.4 4.1l2.5 2.5"/>
-    <path d="M3.4 13.7h9.2"/>
-  </symbol>
-  <symbol id="ic-dup" viewBox="0 0 16 16">
-    <rect x="1.9" y="1.9" width="8.2" height="8.2" rx="1.3"/>
-    <path d="M5.9 13.9h6.8a1.4 1.4 0 001.4-1.4V5.7"/>
-  </symbol>
-  <symbol id="ic-front" viewBox="0 0 16 16">
-    <path d="M2.6 3.1h10.8"/>
-    <path d="M8 13.4V6.6"/>
-    <path d="M5.1 9.5L8 6.5l2.9 3"/>
-  </symbol>
-  <symbol id="ic-back" viewBox="0 0 16 16">
-    <path d="M2.6 12.9h10.8"/>
-    <path d="M8 2.6v6.8"/>
-    <path d="M5.1 6.5L8 9.5l2.9-3"/>
-  </symbol>
-  <symbol id="ic-del" viewBox="0 0 16 16">
-    <path d="M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>
-  </symbol>
-
   <!-- ══ 插入组的三个新图标 ══ -->
   <symbol id="ic-table" viewBox="0 0 16 16">
     <rect x="1.9" y="2.9" width="12.2" height="10.2" rx="1.2"/>
@@ -198,6 +171,10 @@
     <span class="file-chip" id="file-chip"></span>
 
     <span class="tb-sep"></span>
+
+    <button class="tb-btn" id="btn-open" title="打开 HTML 文件 (Ctrl+O)">
+      <svg class="ic" aria-hidden="true"><use href="#ic-open"/></svg><span>打开</span>
+    </button>
 
     <!-- 保存与导出合并成一个按钮，点击后向下展开三个功能。 -->
     <div class="tb-group insert-group" id="save-group">
@@ -371,15 +348,24 @@
               <div class="handle h-sw" data-h="sw"></div>
               <div class="handle h-w"  data-h="w"></div>
               <div class="handle h-rot" data-h="rot" title="旋转">⟳</div>
+              <!-- 端点手柄：直线 / 箭头 / 曲线 / 连接线选中时显示。
+                   拖动改元素的两个端点；曲线还可以拖中间那个拐点（h-bend）。 -->
+              <div class="handle h-ep h-ep-start" data-h="ep-start" title="起点"></div>
+              <div class="handle h-ep h-ep-end"   data-h="ep-end"   title="终点"></div>
+              <div class="handle h-ep h-ep-bend"  data-h="ep-bend"  title="拐点（连接线肘）"></div>
+              <!-- 切线手柄：仅曲线族（曲线 / 曲线连接线）选中时显示。
+                   拖它 = 改该端贝塞尔切线的方向与长度（弯曲程度）。 -->
+              <div class="handle h-ep h-ep-c1"    data-h="ep-c1"    title="起点切线（控制弯曲）"></div>
+              <div class="handle h-ep h-ep-c2"    data-h="ep-c2"    title="终点切线（控制弯曲）"></div>
+              <!-- 切线指引线：连接锚点↔切线手柄的小线段（仅曲线族绘制）。 -->
+              <svg class="tangent-guide" aria-hidden="true">
+                <line class="tangent-spoke t-spoke-1"></line>
+                <line class="tangent-spoke t-spoke-2"></line>
+              </svg>
+              <!-- 多边形顶点手柄容器：选中多边形时按顶点数动态填充。 -->
+              <div class="vtx-layer"></div>
             </div>
             <div class="marquee" id="marquee" hidden></div>
-            <div class="ov-toolbar" id="ov-toolbar" hidden>
-              <button data-tb="edit-text" title="编辑文字（双击进入）"><svg class="ic" aria-hidden="true"><use href="#ic-edit-text"/></svg></button>
-              <button data-tb="dup" title="复制元素"><svg class="ic" aria-hidden="true"><use href="#ic-dup"/></svg></button>
-              <button data-tb="front" title="置于顶层"><svg class="ic" aria-hidden="true"><use href="#ic-front"/></svg></button>
-              <button data-tb="back" title="置于底层"><svg class="ic" aria-hidden="true"><use href="#ic-back"/></svg></button>
-              <button data-tb="del" title="删除元素"><svg class="ic" aria-hidden="true"><use href="#ic-del"/></svg></button>
-            </div>
           </div>
         </div>
       </div>
@@ -456,6 +442,59 @@
             <button class="btn tiny" id="btn-slide-del">删除页</button>
             <button class="btn tiny" id="btn-slide-up">上移</button>
             <button class="btn tiny" id="btn-slide-down">下移</button>
+          </div>
+        </section>
+
+        <!-- ── 图表数据 ──
+             原来改图表数据要双击图表弹一个居中模态框：画布被盖住、
+             改完要点「应用」才知道成没成、错了还得整个重来。
+             现在这段常驻右栏，改一下就重画（停手 0.4 秒自动生效）。
+             选中的不是图表时整段隐藏，右栏不会凭空多出一堆无关控件。
+
+             数据录入是**表格**而不是「一个输入框塞一串逗号值」：
+             前者对齐、可点、一眼能看出哪一格是哪个系列的哪一项，
+             后者改第 3 个数得先进输入框数逗号。 -->
+        <section class="insp-sec" id="sec-chart" hidden>
+          <div class="sec-title">
+            图表数据
+            <span class="sec-hint">改完自动生效</span>
+          </div>
+          <div class="sec-body">
+
+          <div class="field-row">
+            <label class="field-label">图表标题</label>
+            <input class="input" id="chf-title" placeholder="留空则不画标题">
+          </div>
+
+          <div class="row-inline wrap gap chart-opts chart-opts-top">
+            <label class="chk"><input type="checkbox" id="chf-legend"> 显示图例</label>
+            <label class="chk"><input type="checkbox" id="chf-values"> 显示数值</label>
+            <button class="btn tiny" id="chf-reset" type="button">恢复示例数据</button>
+          </div>
+
+          <div class="field-row col">
+            <label class="field-label">系列</label>
+            <div id="chf-series"></div>
+            <button class="btn tiny" id="chf-add-series" type="button">＋ 添加系列</button>
+          </div>
+
+          <div class="field-row col">
+            <label class="field-label">数据</label>
+            <div id="chf-grid-wrap">
+              <div class="chart-grid" id="chf-grid"></div>
+            </div>
+            <button class="btn tiny" id="chf-add-cat" type="button">＋ 添加分类</button>
+          </div>
+
+          <div class="field-row">
+            <label class="field-label">背景色</label>
+            <div class="swatches" id="chf-bg"></div>
+          </div>
+
+          <div class="row-inline wrap gap">
+            <input type="color" id="chf-custom-color" title="自定义系列颜色" hidden>
+          </div>
+
           </div>
         </section>
 
@@ -543,6 +582,19 @@
               <span class="adv-hint">每行一条，仅作用于当前元素</span>
             </div>
           </details>
+
+          <!-- ── 公式专属：选中公式时多出这一段 ──
+               公式的「内容」是 LaTeX 源（data-wd-latex），不是 DOM textContent，
+               右栏给一个 LaTeX 输入框 + 编辑按钮，改完即时重画。 -->
+          <div class="field-row" id="f-formula-row" hidden>
+            <label class="field-label">LaTeX 源</label>
+            <input class="input mono" id="f-formula-src" spellcheck="false"
+                   placeholder="例如 \\frac{a}{b} + \\sqrt{x}">
+            <div class="row-inline gap" style="margin-top:6px">
+              <button class="btn tiny" id="f-formula-edit" type="button">在弹窗中编辑</button>
+              <button class="btn tiny" id="f-formula-reset" type="button">重置缩放</button>
+            </div>
+          </div>
         </section>
 
         <!-- ── 空状态 ── -->
@@ -592,6 +644,9 @@
 <input type="file" id="file-input" accept=".html,.htm,.wd.html" hidden>
 <input type="file" id="image-input" accept="image/*" hidden>
 <input type="file" id="video-input" accept="video/*" hidden>
+<!-- 图表「自定义背景色」的取色器：走原生 <input type="color">，
+     比自绘取色面板省一整套交互，也不占右栏空间。 -->
+<input type="color" id="chart-bg-input" hidden>
 
 <!-- ══ 右键菜单 ══ -->
 <div class="ctxmenu" id="ctxmenu" hidden></div>

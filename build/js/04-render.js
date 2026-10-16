@@ -126,7 +126,13 @@
     var jobs = [];
 
     try {
-      if (doc.fonts && doc.fonts.ready) jobs.push(doc.fonts.ready.catch(function () {}));
+      if (doc.fonts && doc.fonts.ready) {
+        /* 字体加载可能永远不 settle（离线、被拦截），必须限时，否则会拖垮整个导出 */
+        jobs.push(Promise.race([
+          doc.fonts.ready.catch(function () {}),
+          new Promise(function (res) { setTimeout(res, opts.fontTimeout || 4000); })
+        ]));
+      }
     } catch (e) { /* ignore */ }
 
     var imgs = Array.prototype.slice.call(doc.images || []);
@@ -140,7 +146,12 @@
     });
 
     if (opts.extraDelay) jobs.push(new Promise(function (res) { setTimeout(res, opts.extraDelay); }));
-    jobs.push(new Promise(function (res) { U.raf(function () { U.raf(res); }); }));
+    /* rAF 在后台标签页里压根不触发（浏览器会冻结渲染帧），
+       没有兜底的话离屏帧永远「没稳定」，最终只会等到 mountFrame 的超时。 */
+    jobs.push(new Promise(function (res) {
+      var t = setTimeout(res, 500);
+      U.raf(function () { U.raf(function () { clearTimeout(t); res(); }); });
+    }));
     return Promise.all(jobs);
   }
 

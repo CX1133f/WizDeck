@@ -205,7 +205,7 @@ const selectionInfo = () => cdp.eval(`(() => {
     count: s.length,
     labels: s.map(function (n) { return n.tagName + (n.id ? '#' + n.id : ''); }),
     overlayVisible: !document.getElementById('frame-box').hidden,
-    toolbarVisible: !document.getElementById('ov-toolbar').hidden,
+    toolbarGone: !document.getElementById('ov-toolbar'),
     inspectorElementVisible: !document.getElementById('sec-element').hidden,
     editing: !!WD.app.E.editing,
   };
@@ -221,7 +221,7 @@ console.log('\n[1] 点选元素');
   check('点击卡片后产生选中', sel.count === 1, JSON.stringify(sel));
   check('选中标签是 card', (sel.labels[0] || '').indexOf('card') >= 0, JSON.stringify(sel.labels));
   check('选择框可见', sel.overlayVisible === true);
-  check('浮动工具条可见', sel.toolbarVisible === true);
+  check('浮动工具条已从 DOM 里彻底移除', sel.toolbarGone === true);
   check('检查器切到元素属性', sel.inspectorElementVisible === true);
 }
 
@@ -435,7 +435,7 @@ console.log('\n[9] 多选与对齐');
   const dbg = await cdp.eval(`(() => WD.app.debug.log())()`);
   check('Shift+点击形成多选', sel.count >= 2,
     `先 ${one.count} 个 → 后 ${sel.count} 个 ${JSON.stringify(sel.labels)}；日志=${JSON.stringify(dbg)}`);
-  check('多选后浮动工具条仍可见', sel.toolbarVisible === true);
+  check('多选后画布上仍然没有任何浮层控件', sel.toolbarGone === true);
 }
 
 /* ══ 10. 复制粘贴元素 ══ */

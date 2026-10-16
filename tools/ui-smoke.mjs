@@ -167,11 +167,14 @@ console.log('\n[4] 保存与导出下拉');
              caret: getComputedStyle(document.querySelector('#btn-save-menu .btn-caret')).transform };
   })()`);
   check('点击后展开', !r.hidden && r.expanded === 'true');
-  /* 顶栏「打开 HTML」按钮已移除，打开入口并入这里，所以是 4 项而不是 3 项 */
-  check('列出四个功能（打开 / 保存 / 导出HTML / 导出PPTX）', r.items.length === 4, JSON.stringify(r.items));
-  check('首项是打开 HTML', /打开 HTML/.test(r.items[0] || ''), JSON.stringify(r.items));
-  check('含保存/导出HTML/导出PPTX',
-    /保存工程/.test(r.items[1] || '') && /HTML/.test(r.items[2] || '') && /PPTX/.test(r.items[3] || ''),
+  /* 「打开 HTML」的入口定在顶栏 + 空状态两处，不在这个菜单里。
+     这个菜单只管保存与导出：保存 / 导出 HTML 放映页 / 导出 HTML 工程文件 / 导出 PPTX。 */
+  check('列出四个功能（保存 / 导出HTML / 导出工程 / 导出PPTX）', r.items.length === 4, JSON.stringify(r.items));
+  check('首项是保存（不是打开）', /保存/.test(r.items[0] || ''), JSON.stringify(r.items));
+  check('菜单里没有「打开」——它在顶栏和空状态',
+    !r.items.some((t) => /打开/.test(t)) &&
+    /HTML/.test(r.items[1] || '') && /工程文件/.test(r.items[2] || '') &&
+    /Power\s*Point|PPTX/.test(r.items[3] || ''),
     JSON.stringify(r.items));
   check('箭头已旋转（有动画中间态）', r.caret && r.caret !== 'none', String(r.caret));
   await click('btn-save-menu');
@@ -194,7 +197,7 @@ console.log('\n[5] 插入组');
   await click('btn-insert-shape');
   await sleep(300);
   const shapes = await ev(`document.querySelectorAll('#menu-insert .shape-row button').length`);
-  check('「形状」展开 9 种（图片/视频独立成按钮）', shapes === 9, String(shapes));
+  check('「形状」展开 14 种（图片/视频独立成按钮，含曲线族与自由绘制/多边形）', shapes === 14, String(shapes));
   await ev(`document.querySelector('#menu-insert .shape-row button').click()`);
   await sleep(500);
   check('形状能插入', (await ev(`WD.app.E.selection.length`)) > 0);

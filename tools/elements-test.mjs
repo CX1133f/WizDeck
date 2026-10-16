@@ -148,28 +148,62 @@ check('椭圆拖角后宽高可以不等',
   o1.w > o0.w + 40 && Math.abs((o1.w - o1.h) - (o0.w - o0.h)) > 20,
   o0.w + '×' + o0.h + ' → ' + o1.w + '×' + o1.h);
 
-/* ═══ [3] 线条：一维不变二维 ═══ */
-console.log('\n[3] 直线 / 箭头：锁高度');
+/* ═══ [3] 线条：两点头模型 ═══
+   这一节原来断言的是「高度锁死、斜拖高度纹丝不动」——
+   那是旧模型（线条只能是水平线）的产物。现在换成两点头模型：
+   几何由 data-wd-p1 / p2（/ bend）三个比例点决定，盒子是它们的包围盒，
+   于是**斜拖就会长出高度**，而「8 个盒手柄全部隐藏、只留端点手柄」
+   保证用户改的是点而不是把整条线缩放成色块。 */
+console.log('\n[3] 直线 / 箭头：两点头模型');
 for (const [kind, name] of [['line', '直线'], ['arrow', '箭头'], ['dblarrow', '双向箭头']]) {
   await ev(`(() => { WD.app._internal.addElement('${kind}'); return true; })()`);
   await sleep(420);
   const a0 = await last();
-  const before = a0.h;
-  /* 选中后看上下手柄是不是被藏起来了 */
-  const nH = await handleAt('.h-n');
-  const sH = await handleAt('.h-s');
-  check(name + '：上/下手柄被隐藏（点了没意义）', nH === null && sH === null,
-    'n=' + JSON.stringify(nH) + ' s=' + JSON.stringify(sH));
-  const eH = await handleAt('.h-e');
-  if (eH) {
-    await drag(eH.x, eH.y, eH.x + 70, eH.y + 120);   /* 故意斜着拖，含纵向分量 */
-    const a1 = await last();
-    check('★ ' + name + '：斜拖后高度纹丝不动（' + before + 'px）',
-      Math.abs(a1.h - before) < 1, before + ' → ' + a1.h);
-    check('★ ' + name + '：长度确实变了', a1.w > a0.w + 30, a0.w + ' → ' + a1.w);
-  } else {
-    check(name + '：右���柄存在', false, '没找到 .h-e');
-  }
+  /* 8 个盒手柄全部隐藏 */
+  const boxHidden = await ev(`(() => {
+    const names = ['nw','n','ne','e','se','s','sw','w'];
+    return names.every((n) => {
+      const h = document.querySelector('#frame-box .handle.h-' + n);
+      return !h || h.style.display === 'none';
+    });
+  })()`);
+  check('★ ' + name + '：8 个盒手柄全部隐藏（改形状应该拖点，不是缩放盒子）',
+    boxHidden === true, String(boxHidden));
+  /* 三个点手柄里，起终点必须露出来 */
+  const eps = await ev(`(() => {
+    const g = (c) => { const h = document.querySelector('#frame-box ' + c);
+      return !!(h && h.classList.contains('shown')); };
+    return { start: g('.h-ep-start'), end: g('.h-ep-end') };
+  })()`);
+  check('★ ' + name + '：起点 / 终点手柄都露出来', eps.start === true && eps.end === true, JSON.stringify(eps));
+  /* 插入时就把三点显式写出来（存档自描述） */
+  const pts = await ev(`(() => {
+    const n = WD.app.E.stage.getDoc().querySelector('[data-wd-added="${kind}"]');
+    return { p1: n.getAttribute('data-wd-p1'), p2: n.getAttribute('data-wd-p2'),
+             stroke: n.getAttribute('data-wd-stroke'), w: n.getAttribute('data-wd-w') };
+  })()`);
+  check('★ ' + name + '：插入即写出两点 + 颜色 / 粗细的真源属性',
+    pts.p1 === '[0,50]' && pts.p2 === '[100,50]' && !!pts.stroke && parseFloat(pts.w) > 0,
+    JSON.stringify(pts));
+  /* 拖终点：往上拖 → 变成斜线，高度确实长出来 */
+  const ep = await ev(`(() => {
+    const h = document.querySelector('#frame-box .h-ep-end');
+    if (!h) return null;
+    const r = h.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const h0 = a0.h;
+  await drag(ep.x, ep.y, ep.x, ep.y - 110);
+  const a1 = await last();
+  check('★ ' + name + '：拖终点向上 → 变成斜线（高度从 ' + Math.round(h0) + 'px 长出来）',
+    a1.h > h0 + 40, h0 + ' → ' + a1.h);
+  const diag = await ev(`(() => {
+    const n = WD.app.E.stage.getDoc().querySelector('[data-wd-added="${kind}"]');
+    return { p2: n.getAttribute('data-wd-p2'), d: (n.querySelector('svg path') || {}).getAttribute
+             ? n.querySelector('svg path').getAttribute('d').slice(0, 40) : null };
+  })()`);
+  check('  ' + name + '：终点比例点跟着走（p2 的 y 不再是 50）',
+    diag.p2 && JSON.parse(diag.p2)[1] < 45, JSON.stringify(diag));
 }
 /* 箭头本身画出来了吗 */
 const arrowSvg = await ev(`(() => {
@@ -210,9 +244,15 @@ const shapeMenu = await ev(`(() => {
   document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   return { count: n.length, titles };
 })()`);
-check('形状共 9 种', shapeMenu.count === 9, JSON.stringify(shapeMenu));
+/* 14 种 = 原来 9 种 + 本轮新增的 多边形 / 曲线 / 连接线 / 曲线连接线 / 自由绘制。
+   .menu-sep 是分组分隔线，不是按钮，所以不计入 count（选择器只取 button）。 */
+check('形状共 14 种（原 9 + 多边形/曲线/连接线/曲线连接线/自由绘制）',
+  shapeMenu.count === 14, JSON.stringify(shapeMenu));
 check('含 矩形/圆角矩形/圆形/椭圆/三角形/平行四边形/直线/箭头/双向箭头',
   ['矩形', '圆角矩形', '圆形', '椭圆', '三角形', '平行四边形', '直线', '箭头', '双向箭头']
+    .every((t) => shapeMenu.titles.indexOf(t) >= 0), shapeMenu.titles.join(','));
+check('★ 含新增 多边形/曲线/连接线/曲线连接线/自由绘制',
+  ['多边形', '曲线', '连接线', '曲线连接线', '自由绘制']
     .every((t) => shapeMenu.titles.indexOf(t) >= 0), shapeMenu.titles.join(','));
 check('「横线」已删除', shapeMenu.titles.indexOf('横线') < 0, shapeMenu.titles.join(','));
 check('「标签」已删除', shapeMenu.titles.indexOf('标签') < 0, shapeMenu.titles.join(','));
@@ -469,8 +509,11 @@ for (const k of ['rect', 'circle', 'triangle', 'para', 'line', 'arrow', 'dblarro
 check('★ 圆形覆盖率接近 π/4（78.5%±6）',
   Math.abs((raster.circle || 0) - 78.5) < 6, String(raster.circle));
 check('★ 三角形覆盖率约一半', (raster.triangle || 0) > 40 && (raster.triangle || 0) < 60, String(raster.triangle));
-check('★ 直线覆盖率接近满格（6px 细线）',
-  (raster.line || 0) > 90, String(raster.line));
+/* 直线现在是「8px 盒子里一根 3px 的杆」——盒子是两端点的包围盒，杆厚来自
+   data-wd-w，两者不再像旧模型那样相等（旧模型盒高就是线粗，所以能满格）。
+   所以这里断的是「有真实像素、且明显是细线而不是实心块」。 */
+check('★ 直线栅格化后有真实像素（细杆，不是实心块）',
+  (raster.line || 0) > 15 && (raster.line || 0) < 80, String(raster.line));
 
 /* 帧内坐标 → 顶层页面坐标。
    ⚠ CDP 的 Input.dispatchMouseEvent 发的是**顶层页面**坐标，
@@ -611,15 +654,18 @@ console.log('\n[14] 图表：标题/图例/数值 + 双击改数据');
    ② 不能量「标题带」的总墨量 —— 网格线(#d8e0ea)、坐标刻度(#7c8ba1)也落在同一条带里。
    所以只数**文字颜色**那一档：标题 #16202e、图例文字 #4a5a70 算数，
    网格线 / 刻度 / 柱子(#3b6fd4) 都不在阈值内。 */
+/*   ③ 默认背景已改成透明（用户新增的「背景色」控件）—— 透明像素的 RGB 全是 0，
+      原本 0<110 全成立，会把整条带都当成墨；多一道 alpha 阈值（>128）排除透明，
+      测的还是「真的画了字」。 */
 const chartInk = await ev(`(() => {
   const cv = document.createElement('canvas'); cv.width = 960; cv.height = 560;
-  /* 只数深色文字像素（排除网格线、刻度数字、柱子填充） */
+  /* 只数**不透明**且深色文字像素（透明背景的 0,0,0,0 不算） */
   const textInk = (d, y0, y1) => {
     WD.elements.drawChart('bar', cv, d);
     const x = cv.getContext('2d').getImageData(0, y0, 960, y1 - y0).data;
     let n = 0;
     for (let i = 0; i < x.length; i += 4) {
-      if (x[i] < 110 && x[i + 1] < 115 && x[i + 2] < 140) n++;
+      if (x[i + 3] > 128 && x[i] < 110 && x[i + 1] < 115 && x[i + 2] < 140) n++;
     }
     return n;
   };
@@ -677,52 +723,153 @@ check('图表元素带着自己的数据模型（标题/分类/系列）',
 check('双击点确实落在图表上（先自证落点）',
   (await hitIs(chartMeta.x, chartMeta.y)).tag === 'IMG', JSON.stringify(await hitIs(chartMeta.x, chartMeta.y)));
 await dblclickAt(chartMeta.x, chartMeta.y);
-const chartDlg = await ev(`(() => ({
-  open: !document.getElementById('modal').hidden,
-  title: document.getElementById('modal-title').textContent,
-  hasTitle: !!document.getElementById('ch-title'),
-  hasLabels: !!document.getElementById('ch-labels'),
-  rows: document.querySelectorAll('.chart-row').length,
-  legend: !!document.getElementById('ch-legend'),
-  values: !!document.getElementById('ch-values'),
-}))()`);
-check('★ 双击图表弹出数据表编辑器',
-  chartDlg.open && /图表/.test(chartDlg.title || '') && chartDlg.hasTitle && chartDlg.hasLabels,
-  JSON.stringify(chartDlg));
-check('数据表里每个系列一行，可勾图例/数值',
-  chartDlg.rows >= 1 && chartDlg.legend && chartDlg.values, JSON.stringify(chartDlg));
-/* 标签列宽度不够会把「系列与数值」折成两行掉一个孤字，肉眼很明显 */
-const lblLines = await ev(`(() => Array.from(document.querySelectorAll('#modal .form-lbl')).map((el) => ({
-  txt: el.textContent.trim(),
-  lines: Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || 18)),
-  need: (() => { const o = el.style.width; el.style.width = 'auto'; const w = el.getBoundingClientRect().width; el.style.width = o; return Math.ceil(w); })(),
-})))()`);
-check('数据表标签一律单行不折断',
-  lblLines.length > 0 && lblLines.every((l) => l.lines <= 1),
-  JSON.stringify(lblLines));
+const chartPanel = await ev(`(() => {
+  const sec = document.getElementById('sec-chart');
+  const rows = document.querySelectorAll('#chf-series .series-row');
+  return {
+    visible: !!sec && !sec.hidden,
+    flashed: !!sec && sec.classList.contains('flash'),
+    focused: (document.activeElement || {}).id,
+    modalHidden: document.getElementById('modal').hidden,
+    title: document.getElementById('chf-title').value,
+    rows: rows.length,
+    /* 每行：名称输入 + 类型下拉 + 颜色格 + 删除键 */
+    rowName: rows.length ? !!rows[0].querySelector('[data-f="name"]') : false,
+    rowType: rows.length ? !!rows[0].querySelector('[data-f="kind"]') : false,
+    rowColor: rows.length ? !!rows[0].querySelector('.sw-series') : false,
+    rowDel: rows.length ? !!rows[0].querySelector('.chart-del') : false,
+    addSeries: !!document.getElementById('chf-add-series'),
+    addCat: !!document.getElementById('chf-add-cat'),
+    /* 数据网格：表头 = 系列数，行 = 分类数，值格 = 行×列 */
+    gridHeads: document.querySelectorAll('#chf-grid .chart-grid-head').length,
+    gridKeys: document.querySelectorAll('#chf-grid .grid-key').length,
+    gridVals: document.querySelectorAll('#chf-grid .grid-val').length,
+    bgNone: !!document.getElementById('chf-bg-none'),
+    bgSwatches: document.querySelectorAll('#chf-bg .sw-bg').length,
+    bgPick: !!document.getElementById('chf-bg-pick'),
+    legend: !!document.getElementById('chf-legend'),
+    values: !!document.getElementById('chf-values'),
+    reset: !!document.getElementById('chf-reset'),
+    /* 用户要求删掉的那个全局「图表类型」分段必须不在 */
+    hasKindSeg: !!document.getElementById('chf-kind'),
+    /* 也不该再有「一个输入框塞一串逗号值」 */
+    hasCommaInput: !!document.getElementById('chf-labels') || !!document.getElementById('chf-v0'),
+  };
+})()`);
+check('★ 双击图表把右栏「图表数据」段唤到眼前（不再弹模态框）',
+  chartPanel.visible && chartPanel.flashed && chartPanel.modalHidden && chartPanel.focused === 'chf-title',
+  JSON.stringify(chartPanel));
+check('★ 上方的「图表类型」分段与逗号输入框已删除',
+  chartPanel.hasKindSeg === false && chartPanel.hasCommaInput === false,
+  JSON.stringify({ kindSeg: chartPanel.hasKindSeg, commaInput: chartPanel.hasCommaInput }));
+check('★ 系列行有 名称 + 类型 + 颜色 + 删除 四件',
+  chartPanel.rows >= 1 && chartPanel.rowName && chartPanel.rowType && chartPanel.rowColor && chartPanel.rowDel,
+  JSON.stringify(chartPanel));
+check('★ 数据是「分类 × 系列」网格（表头数=系列数、值格=行×列），不是一串逗号值',
+  chartPanel.gridHeads === chartPanel.rows &&
+  chartPanel.gridKeys >= 2 && chartPanel.gridVals === chartPanel.gridKeys * chartPanel.gridHeads,
+  JSON.stringify({ heads: chartPanel.gridHeads, keys: chartPanel.gridKeys, vals: chartPanel.gridVals, rows: chartPanel.rows }));
+check('★ 有「＋ 添加系列」「＋ 添加分类」按钮',
+  chartPanel.addSeries && chartPanel.addCat, JSON.stringify(chartPanel));
+check('★ 背景色控件齐全：无 + 预设色 + 自定义取色',
+  chartPanel.bgNone && chartPanel.bgSwatches >= 4 && chartPanel.bgPick,
+  JSON.stringify({ none: chartPanel.bgNone, sw: chartPanel.bgSwatches, pick: chartPanel.bgPick }));
+check('图例 / 数值 / 恢复示例仍在',
+  chartPanel.legend && chartPanel.values && chartPanel.reset, JSON.stringify(chartPanel));
+check('★ 图表背景色默认「无」（不铺白底，贴深色课件不会被贴一张白纸）',
+  await ev(`(() => {
+    const img = WD.app.E.stage.getDoc().querySelector('img[data-wd-chart]');
+    return JSON.parse(img.getAttribute('data-wd-chart')).bgColor === '';
+  })()`), 'bgColor 应为空串');
+
+/* 选中别的元素时，这段必须自己消失 —— 右栏不该留着无关控件。
+   要看**计算后的 display**，不能只看 .hidden 属性：
+   .insp-sec 是 display:flex，作者样式会盖掉浏览器默认的 [hidden]{display:none}。 */
+const hiddenWhenOther = await ev(`(() => {
+  const doc = WD.app.E.stage.getDoc();
+  const other = doc.querySelector('p,div,span');
+  WD.app._internal.setSelection([other]);
+  const sec = document.getElementById('sec-chart');
+  const out = { hidden: sec.hidden, display: getComputedStyle(sec).display, tag: other.tagName };
+  WD.app._internal.setSelection([doc.querySelector('img[data-wd-chart]')]);
+  return { hidden: out.hidden, display: out.display, backHidden: sec.hidden,
+           backDisplay: getComputedStyle(sec).display, tag: out.tag };
+})()`);
+check('选中非图表元素时这段自动隐藏，切回图表又出现',
+  hiddenWhenOther.display === 'none' && hiddenWhenOther.backDisplay !== 'none', JSON.stringify(hiddenWhenOther));
+
+/* 即时生效：改输入框 → 停手 → 图自己重画，没有「应用」按钮。
+   现在数据在网格里：改分类名要改行首那一格，改数值要改对应的值格。 */
 await ev(`(() => {
-  document.getElementById('ch-title').value = '改过的标题';
-  document.getElementById('ch-labels').value = '甲, 乙, 丙';
-  document.getElementById('cs-v0').value = '10, 20, 30';
-  document.getElementById('ch-values').checked = true;
-  Array.from(document.querySelectorAll('#modal-foot .btn')).find(b => b.textContent.trim() === '应用').click();
+  document.getElementById('chf-title').value = '改过的标题';
+  /* 把前三个分类改名、前三个数值改掉 —— 一个 input 触发读全表
+     （readChartPanel 在 0.4s 后从 DOM 把所有格一起读，单独触发每个
+     只会多发几次防抖重画） */
+  const keys = Array.from(document.querySelectorAll('#chf-grid .grid-key'));
+  ['甲', '乙', '丙'].forEach((t, i) => { if (keys[i]) keys[i].value = t; });
+  for (let ri = 0; ri < 3; ri++) {
+    const v = document.querySelector('#chf-grid .grid-val[data-ri="' + ri + '"][data-si="0"]');
+    if (v) v.value = String((ri + 1) * 10);
+  }
+  document.getElementById('chf-title').dispatchEvent(new Event('input', { bubbles: true }));
   return true;
 })()`);
-await sleep(800);
+const notYet = await ev(`(() => {
+  const img = WD.app.E.stage.getDoc().querySelector('img[data-wd-chart]');
+  return JSON.parse(img.getAttribute('data-wd-chart')).title;
+})()`);
+check('刚敲完还没到防抖时间，图上数据保持原样（不是每个键都重画一次）',
+  notYet !== '改过的标题', String(notYet));
+await sleep(900);
 const chartApplied = await ev(`(() => {
   const img = WD.app.E.stage.getDoc().querySelector('img[data-wd-chart]');
   const d = JSON.parse(img.getAttribute('data-wd-chart'));
   return { title: d.title, labels: d.labels, values: d.series[0].data,
-           showValues: d.showValues, modalHidden: document.getElementById('modal').hidden,
            srcLen: (img.getAttribute('src') || '').length };
 })()`);
-check('★ 改完标题立即生效并写回数据模型',
-  chartApplied.title === '改过的标题' && chartApplied.modalHidden, JSON.stringify(chartApplied));
-check('★ 改完分类与数值立即生效',
-  JSON.stringify(chartApplied.labels) === JSON.stringify(['甲', '乙', '丙']) &&
-  JSON.stringify(chartApplied.values.slice(0, 3)) === JSON.stringify([10, 20, 30]) &&
-  chartApplied.srcLen !== chartMeta.srcLen,
+check('★ 改完标题自动生效并写回数据模型（全程没点任何按钮）',
+  chartApplied.title === '改过的标题' && chartApplied.srcLen !== chartMeta.srcLen,
   JSON.stringify(chartApplied));
+check('★ 改完分类与数值自动生效（改前 3 个，其余保持）',
+  JSON.stringify(chartApplied.labels.slice(0, 3)) === JSON.stringify(['甲', '乙', '丙']) &&
+  JSON.stringify(chartApplied.values.slice(0, 3)) === JSON.stringify([10, 20, 30]),
+  JSON.stringify(chartApplied));
+/* 输入框不能被防抖回填打断：打字打到一半数据已经写回，光标还得在原处 */
+const caret = await ev(`(() => {
+  const f = document.getElementById('chf-title');
+  f.focus();
+  f.setSelectionRange(2, 2);
+  f.value = f.value.slice(0, 2) + '季度' + f.value.slice(2);
+  const want = f.value.length;
+  f.dispatchEvent(new Event('input', { bubbles: true }));
+  return { want: want, hasFocus: document.activeElement === f };
+})()`);
+await sleep(900);
+const caretAfter = await ev(`(() => {
+  const f = document.getElementById('chf-title');
+  return { focused: document.activeElement === f, sel: f.selectionStart,
+           val: f.value, title: JSON.parse(WD.app.E.stage.getDoc().querySelector('img[data-wd-chart]').getAttribute('data-wd-chart')).title };
+})()`);
+check('★ 即时回填后焦点与光标仍在原处（打字不会被自己的回填打断）',
+  caret.hasFocus && caretAfter.focused && caretAfter.sel === caret.want &&
+  caretAfter.title === caretAfter.val, JSON.stringify({ before: caret, after: caretAfter }));
+/* 分类名清空不能把图弄成空图：留空的分类名回退成「分类N」，图仍然完整 */
+await ev(`(() => {
+  const keys = Array.from(document.querySelectorAll('#chf-grid .grid-key'));
+  if (keys[0]) { keys[0].value = ''; keys[0].dispatchEvent(new Event('input', { bubbles: true })); }
+  return true;
+})()`);
+await sleep(900);
+const emptyLabels = await ev(`(() => {
+  const img = WD.app.E.stage.getDoc().querySelector('img[data-wd-chart]');
+  const d = JSON.parse(img.getAttribute('data-wd-chart'));
+  return { labels: d.labels, series0: d.series[0].data.slice(0, 3) };
+})()`);
+check('★ 分类名留空时回退成「分类N」，图仍有完整的分类与数值',
+  emptyLabels.labels.length >= 3 && emptyLabels.labels[0] === '分类1' &&
+  emptyLabels.labels[1] === '乙' && emptyLabels.labels[2] === '丙' &&
+  JSON.stringify(emptyLabels.series0) === JSON.stringify([10, 20, 30]),
+  JSON.stringify(emptyLabels));
 
 /* 清掉前面各段插进来的元素：后面的用例要「点哪儿就是哪儿」，
    否则新元素压在旧元素上，双击落点会被上一个用例的残留抢走。 */
@@ -789,6 +936,508 @@ check('★ 横排/竖排文本框的图标互不相同',
 check('★ 条目是竖排的菜单项（高度够放一行文字，不是小方块）',
   menuAudit['menu-insert'].every((i) => i.h >= 28 && i.w >= 140),
   JSON.stringify(menuAudit['menu-insert'][0]));
+
+/* ═══ [16] 图表点位必须落在横轴标签正上方 ═══
+   折线图原来用 `pad.l + pw/(n-1)*i` 布点，而横轴标签在格心 `pad.l + pw*(i+.5)/n`：
+   6 个分类时首点偏左 73px（正好一格），末点偏右 73px，画出来就是「点悬在标签旁边」，
+   而且首点正压在 y 轴上。这里同时钉住两条：几何公式与**真实像素**。 */
+console.log('\n[16] 折线图点位对齐横轴标签');
+const chartAlign = await ev(`(() => {
+  const cv = document.createElement('canvas'); cv.width = 960; cv.height = 560;
+  const data = WD.elements.defaultChartData('chartline');
+  WD.elements.drawChart('chartline', cv, data);
+  const W = cv.width, H = cv.height;
+  const pad = { l: 60, r: 24, t: 70, b: 90 };        /* CHART_HEAD=56 +14 / 46+CHART_LEGEND=44 */
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b, n = data.labels.length;
+  const maxV = Math.max.apply(null, data.series.reduce((a, s) => a.concat(s.data), [0]));
+  const yMax = (() => { const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
+    for (const st of [1,1.2,1.5,2,2.5,3,4,5,6,8,10]) if (st * mag >= maxV) return st * mag; return 10 * mag; })();
+  /* 期望：每个点都在自己那一格的中心（= 横轴标签的 x） */
+  const slot = pw / n;
+  const expect = data.labels.map((_, i) => ({ x: pad.l + slot * (i + .5),
+                                              y: pad.t + ph - ph * data.series[0].data[i] / yMax }));
+  const img = cv.getContext('2d').getImageData(0, 0, W, H).data;
+  /* 数据点用系列的颜色（不再是写死的蓝）：折线图默认色板是 #3b6fd4，
+     但现在「颜色」是用户可配的 —— 读图时按实际颜色搜。 */
+  const c = data.series[0].color;
+  const cr = parseInt(c.slice(1, 3), 16), cg = parseInt(c.slice(3, 5), 16), cb = parseInt(c.slice(5, 7), 16);
+  const isDot = (x, y) => { const i = (y * W + x) * 4;
+    /* 阈值比标题/图例那一档宽：点的描边是同色，中心是白底，所以不取「深色」而取「与该色同色」 */
+    return img[i + 3] > 128 && Math.abs(img[i] - cr) < 40 && Math.abs(img[i+1] - cg) < 40 && Math.abs(img[i+2] - cb) < 40; };
+  const measured = expect.map((p) => {
+    let sx = 0, cnt = 0;
+    /* 搜的是点（r=5）而不是那条线 —— 搜太宽会把连接线也量进来，质心被拉向「上一个点」那一侧。
+       x 用 ±4（点的可见蓝区 r=4，±4 刚好包完），y 用 ±3（点上下的几个像素，
+       避开线经过的两条横带 r=1.5 的位置）。 */
+    for (let y = Math.round(p.y) - 3; y <= Math.round(p.y) + 3; y++) {
+      if (y < 0 || y >= H) continue;
+      for (let x = Math.max(0, Math.round(p.x) - 4); x <= Math.min(W - 1, Math.round(p.x) + 4); x++) {
+        if (isDot(x, y)) { sx += x; cnt++; }
+      }
+    }
+    return { expectX: +p.x.toFixed(1), measuredX: cnt ? +(sx / cnt).toFixed(1) : null, px: cnt };
+  });
+  return { n, slot: +slot.toFixed(1), axisLeft: pad.l,
+           firstX: +expect[0].x.toFixed(1), lastX: +expect[n-1].x.toFixed(1),
+           rightEdge: pad.l + pw, measured };
+})()`);
+check('★ 折线图每个数据点都在横轴标签正上方（真实像素质心 ±4px）',
+  chartAlign.measured.length === chartAlign.n && chartAlign.measured.every((m) => m.px > 20 && m.measuredX !== null && Math.abs(m.measuredX - m.expectX) <= 4),
+  JSON.stringify(chartAlign.measured));
+check('★ 折线图首点不再压在 y 轴上（留出至少半格）',
+  chartAlign.firstX - chartAlign.axisLeft >= chartAlign.slot * 0.4,
+  'firstX=' + chartAlign.firstX + ' axisLeft=' + chartAlign.axisLeft + ' slot=' + chartAlign.slot);
+check('★ 折线图末点与右边界对称留白（不贴边）',
+  chartAlign.rightEdge - chartAlign.lastX >= chartAlign.slot * 0.4,
+  'lastX=' + chartAlign.lastX + ' rightEdge=' + chartAlign.rightEdge);
+
+/* ═══ [17] 右键菜单：菜单贴在鼠标处，且作用对象就是右键的那个元素 ═══
+   两条都曾经是坏的，而且互为放大：
+   ① 帧内右键事件的 clientX/clientY 是**帧内坐标**，直接拿去定位父页的
+      position:fixed 菜单，菜单就落在帧左上角而不是鼠标处；
+   ② 命中测试又误用了**父页坐标**喂 doc.elementFromPoint，于是点副标题
+      可能命中标题 —— 菜单里的「编辑文字 / 删除」作用在上一次选中的元素上。
+   这里用真实右键（CDP Input）走完整链路。 */
+console.log('\n[17] 右键菜单定位与作用对象');
+await clearAdded();
+const rcBox = await ev(`(() => {
+  const doc = WD.app.E.stage.getDoc();
+  const root = WD.render.findRoot(doc);
+  const kids = Array.from(root.querySelectorAll('*')).filter((n) => (n.textContent || '').trim());
+  const A = kids[0], B = kids[1] || kids[0];
+  const ra = A.getBoundingClientRect(), rb = B.getBoundingClientRect();
+  return {
+    aTag: A.tagName, bTag: B.tagName,
+    a: { x: ra.left + ra.width / 2, y: ra.top + ra.height / 2 },
+    b: { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2 },
+  };
+})()`);
+const rcA = await toPage(rcBox.a.x, rcBox.a.y);
+const rcB = await toPage(rcBox.b.x, rcBox.b.y);
+
+/* 先选中 A，再去右键 B —— 菜单必须作用于 B 且贴在 B 的位置 */
+await ev(`(() => {
+  const doc = WD.app.E.stage.getDoc();
+  const kids = Array.from(WD.render.findRoot(doc).querySelectorAll('*')).filter((n) => (n.textContent || '').trim());
+  WD.app._internal.setSelection([kids[0]]);
+  WD.app._internal.refreshOverlay();
+  document.getElementById('ctxmenu').hidden = true;
+  return true;
+})()`);
+await sleep(220);
+await mouse('mousePressed', rcB.x, rcB.y, 'right');
+await mouse('mouseReleased', rcB.x, rcB.y, 'right');
+await sleep(320);
+const rcState = await ev(`(() => {
+  const m = document.getElementById('ctxmenu');
+  const r = m.getBoundingClientRect();
+  const sel = WD.app.E.selection[0];
+  const doc = WD.app.E.stage.getDoc();
+  const kids = Array.from(WD.render.findRoot(doc).querySelectorAll('*')).filter((n) => (n.textContent || '').trim());
+  return { hidden: m.hidden, left: r.left, top: r.top, w: r.width,
+           items: Array.from(m.querySelectorAll('.ctx-txt')).map((e) => e.textContent),
+           selText: sel ? (sel.textContent || '').trim().slice(0, 12) : null,
+           selTag: sel ? sel.tagName : null,
+           bText: (kids[1] || kids[0]).textContent.trim().slice(0, 12) };
+})()`);
+check('★ 右键菜单出现在鼠标位置（不是画布左上角）',
+  !rcState.hidden && Math.abs(rcState.left - rcB.x) < 14 && Math.abs(rcState.top - rcB.y) < 14,
+  'menu=(' + Math.round(rcState.left) + ',' + Math.round(rcState.top) + ') 鼠标=(' + Math.round(rcB.x) + ',' + Math.round(rcB.y) + ')');
+check('★ 右键另一个元素后，菜单作用于**它**（原来用旧选区）',
+  rcState.selTag === rcBox.bTag && rcState.selText === rcState.bText,
+  '选中=' + rcState.selTag + ':' + rcState.selText + ' 期望=' + rcBox.bTag + ':' + rcState.bText);
+check('★ 右键菜单是元素操作（有「编辑文字」）',
+  rcState.items.indexOf('编辑文字') >= 0, JSON.stringify(rcState.items.slice(0, 3)));
+check('★ 右键菜单不溢出视口',
+  rcState.left >= 0 && rcState.top >= 0 &&
+  rcState.left + rcState.w <= 1600 && rcState.top + 190 <= 950,
+  'left=' + Math.round(rcState.left) + ' top=' + Math.round(rcState.top) + ' w=' + Math.round(rcState.w));
+
+/* 注意：这里不再补一次"连续右键同一坐标"的断言。
+   菜单是 position:fixed 且跟着鼠标出现的，第二次右键会先落在**已经打开的那张菜单**上
+   （elementFromPoint 命中的是菜单，不是画布），那测的是「菜单挡没挡住自己」，
+   与"右键是否作用于该元素"无关，只会得出假失败。 */
+await ev('WD.app._internal.closeContextMenu()');
+
+/* ═══ [18] 新增的 5 种形状：曲线 / 连接线 / 曲线连接线 / 自由绘制 / 多边形 ═══
+   四个是**描边**图形（fill 透明、颜色走 stroke、线宽走 stroke-width），
+   与原来的直线 / 箭头 / 双箭头（填充图形）是不同的渲染路径 ——
+   这里把两条路径都钉住：描边图形 fill 必须是 none。
+   另外自由绘制 / 多边形还要验「比例点 → 绝对路径」的换算。 */
+console.log('\n[18] 新增形状：曲线 / 连接线 / 曲线连接线 / 自由绘制 / 多边形');
+await clearAdded();
+const newShapes = await ev(`(() => {
+  const out = {};
+  [['curve','lock-h-min'],['connector','lock-h-min'],['connectorcurve','lock-h-min'],
+   ['drawn','ratio'],['poly','ratio']].forEach(([k, wantMode]) => {
+    const n = WD.app._internal.addElement(k);
+    if (!n) { out[k] = { none: true }; return; }
+    const svg = n.querySelector(':scope > svg');
+    const p = svg ? svg.firstChild : null;
+    const d = p ? (p.getAttribute('d') || '') : '';
+    out[k] = {
+      tag: n.tagName, hasSvg: !!svg,
+      dLen: d.length, closed: d.trim().slice(-1) === 'Z',
+      fill: p ? p.getAttribute('fill') : null,
+      stroke: p ? p.getAttribute('stroke') : null,
+      sw: parseFloat(p ? p.getAttribute('stroke-width') : ''),
+      viewBox: svg ? svg.getAttribute('viewBox') : null,
+      mode: (WD.elements.constraintOf(n) || {}).mode,
+      points: n.getAttribute('data-wd-points'),
+      selectable: WD.app._internal.isSelectable(n, n.ownerDocument.defaultView),
+      label: WD.util.describeElement(n),
+    };
+  });
+  return out;
+})()`);
+for (const k of ['curve', 'connector', 'connectorcurve', 'drawn', 'poly']) {
+  const s = newShapes[k];
+  check('★ ' + k + '：插进来是描边 SVG 且可被选中（fill=none / stroke 有色）',
+    !s.none && s.hasSvg && s.fill === 'none' && /^#|rgb/.test(s.stroke || '') && s.sw > 0 &&
+    s.dLen > 8 && s.selectable === true,
+    JSON.stringify(s).slice(0, 200));
+}
+/* 曲线族现在没有约束：几何由三点决定，盒子是包围盒，
+   「能不能变成任意角度」不再靠约束实现，而是靠拖端点（见 [3]）。 */
+check('★ 曲线 / 连接线 / 曲线连接线不再锁高度（两点模型，可画斜的）',
+  ['curve', 'connector', 'connectorcurve'].every((k) => !newShapes[k].mode),
+  JSON.stringify(['curve', 'connector', 'connectorcurve'].map((k) => k + '=' + newShapes[k].mode)));
+check('★ 自由绘制 / 多边形用 ratio（等比缩放，笔迹不会被压扁）',
+  newShapes.drawn.mode === 'ratio' && newShapes.poly.mode === 'ratio',
+  JSON.stringify({ drawn: newShapes.drawn.mode, poly: newShapes.poly.mode }));
+/* 两点头模型下，曲线的 `d` 必须真的铺满整个 viewBox —— 旧实现把按 100×100
+   写的默认 d 配上了真实尺寸的 viewBox，曲线只画在左边 16%。 */
+const curveSpread = await ev(`(() => {
+  const n = WD.app.E.stage.getDoc().querySelector('[data-wd-added="curve"]');
+  if (!n) return { none: true };
+  n.style.width = '620px'; n.style.height = '150px';
+  WD.elements.syncLine(n);
+  const svg = n.querySelector(':scope > svg');
+  const d = svg.firstChild.getAttribute('d');
+  const nums = (d.match(/-?[\\d.]+/g) || []).map(Number);
+  const xs = nums.filter((_, i) => i % 2 === 0);
+  return { d, minX: Math.min.apply(null, xs), maxX: Math.max.apply(null, xs),
+           vbW: parseFloat(svg.getAttribute('viewBox').split(' ')[2]) };
+})()`);
+check('★ 曲线的路径真的铺满整个 viewBox（旧实现只画在左边 16%）',
+  curveSpread.maxX >= curveSpread.vbW - 1 && curveSpread.minX <= 1,
+  JSON.stringify(curveSpread));
+check('★ 自由绘制 / 多边形带比例点（缩放后笔迹仍贴合自己的边框）',
+  /^\[\[/.test(newShapes.drawn.points || '') && /^\[\[/.test(newShapes.poly.points || ''),
+  JSON.stringify({ drawn: newShapes.drawn.points, poly: newShapes.poly.points }).slice(0, 160));
+check('★ 多边形路径是闭合的（以 Z 结尾）',
+  newShapes.poly.closed === true, newShapes.poly.dLen + ' ' + newShapes.poly.closed);
+check('★ 自由绘制路径**不**闭合（一笔画不该被强行封口）',
+  newShapes.drawn.closed === false, String(newShapes.drawn.closed));
+check('★ 图层面板不再一律显示「容器」（自插元素报自己的名字）',
+  Object.keys(newShapes).every((k) => /曲线|连接线|自由绘制|多边形/.test(newShapes[k].label)),
+  JSON.stringify(Object.keys(newShapes).map((k) => k + '=' + newShapes[k].label)));
+
+const reshaped = await ev(`(() => {
+  const doc = WD.app.E.stage.getDoc();
+  const n = doc.querySelector('[data-wd-added="curve"]');
+  if (!n) return { none: true };
+  n.style.width = '900px'; n.style.height = '260px';
+  WD.elements.syncLine(n);
+  const svg = n.querySelector(':scope > svg');
+  return { viewBox: svg.getAttribute('viewBox'), w: svg.getAttribute('width'), h: svg.getAttribute('height') };
+})()`);
+check('★ 改尺寸后 viewBox 与盒子同步（描边不会被缩放拉粗）',
+  reshaped.viewBox === '0 0 900 260' && reshaped.w === '900' && reshaped.h === '260',
+  JSON.stringify(reshaped));
+
+/* ═══ [19] 画布绘制：自由绘制拖一笔、多边形逐点闭合 ═══ */
+console.log('\n[19] 画布绘制工具（自由绘制 / 多边形）');
+await clearAdded();
+const drawRes = await ev(`(async () => {
+  const DT = WD.drawTool, I = WD.app._internal, E = WD.app.E;
+  const doc = E.stage.getDoc();
+  const root = WD.render.findRoot(doc);
+  const mk = (x, y) => ({ clientX: x, clientY: y, button: 0,
+    preventDefault() {}, stopPropagation() {} });
+  const out = { hasTool: !!DT, bridge: !!WD.drawBridge };
+  if (!DT) return out;
+
+  out.started = DT.start('drawn');
+  out.cursor = doc.body.style.cursor;
+  DT.handleDown(mk(300, 300));
+  for (let i = 1; i <= 14; i++) DT.handleMove(mk(300 + i * 24, 300 + Math.sin(i / 2) * 46));
+  out.movePts = DT.pts.length;
+  out.preview = !!document.querySelector('#overlay .wd-draw-preview');
+  DT.handleUp(mk(636, 300));
+  await new Promise((r) => setTimeout(r, 260));
+  const drawnEls = Array.from(root.querySelectorAll('[data-wd-added="drawn"]'));
+  out.drawnCount = drawnEls.length;
+  out.previewCleared = !document.querySelector('#overlay .wd-draw-preview');
+  out.stillActive = DT.active();
+  if (drawnEls[0]) {
+    const n = drawnEls[0];
+    const pts = JSON.parse(n.getAttribute('data-wd-points') || '[]');
+    out.drawnGeom = { left: parseFloat(n.style.left), top: parseFloat(n.style.top),
+                      w: parseFloat(n.style.width), h: parseFloat(n.style.height),
+                      pts: pts.length, first: pts[0],
+                      d: (n.querySelector('svg path') || {}).getAttribute
+                         ? n.querySelector('svg path').getAttribute('d').slice(0, 24) : null };
+  }
+
+  DT.stop();
+  out.polyStarted = DT.start('poly');
+  [[420, 640], [760, 600], [880, 820], [520, 880]].forEach(([x, y]) => DT.handleDown(mk(x, y)));
+  out.polyPtsBeforeClose = DT.pts.length;
+  DT.handleDown(mk(422, 642));
+  await new Promise((r) => setTimeout(r, 260));
+  const polyEls = Array.from(root.querySelectorAll('[data-wd-added="poly"]'));
+  out.polyCount = polyEls.length;
+  if (polyEls[0]) {
+    const n = polyEls[0];
+    out.polyGeom = { w: parseFloat(n.style.width), h: parseFloat(n.style.height),
+                     pts: JSON.parse(n.getAttribute('data-wd-points') || '[]').length,
+                     closed: (n.querySelector('svg path').getAttribute('d') || '').trim().slice(-1) === 'Z' };
+  }
+
+  DT.stop(); DT.start('poly');
+  DT.handleDown(mk(200, 900)); DT.handleDown(mk(260, 940));
+  DT.finish('escape');
+  await new Promise((r) => setTimeout(r, 200));
+  out.polyCountAfterTooFew = root.querySelectorAll('[data-wd-added="poly"]').length;
+
+  DT.stop();
+  out.activeAfterStop = DT.active();
+  out.cursorAfterStop = doc.body.style.cursor;
+  out.previewAfterStop = !!document.querySelector('#overlay .wd-draw-preview');
+  out.leakedListeners = !!DT.bound;
+  return out;
+})()`);
+check('★ 绘制桥与工具就绪', drawRes.hasTool === true && drawRes.bridge === true, JSON.stringify(drawRes).slice(0, 120));
+check('★ 进入自由绘制后光标变十字线', drawRes.cursor === 'crosshair', String(drawRes.cursor));
+check('★ 自由绘制：拖动中有实时预览、松开后落地 1 个元素并清掉预览',
+  drawRes.movePts >= 8 && drawRes.preview === true && drawRes.drawnCount === 1 && drawRes.previewCleared === true,
+  JSON.stringify({ movePts: drawRes.movePts, preview: drawRes.preview, created: drawRes.drawnCount, cleared: drawRes.previewCleared }));
+check('★ 落地的笔迹有合理包围盒与比例点',
+  drawRes.drawnGeom && drawRes.drawnGeom.w > 100 && drawRes.drawnGeom.h > 20 && drawRes.drawnGeom.pts >= 8,
+  JSON.stringify(drawRes.drawnGeom));
+check('★ 画完一笔后工具保持激活（连着画不用重新点菜单）', drawRes.stillActive === true, String(drawRes.stillActive));
+check('★ 多边形：4 个顶点 + 点回起点闭合，落地 1 个闭合多边形',
+  drawRes.polyPtsBeforeClose === 4 && drawRes.polyCount === 1 &&
+  drawRes.polyGeom && drawRes.polyGeom.pts === 4 && drawRes.polyGeom.closed === true,
+  JSON.stringify({ before: drawRes.polyPtsBeforeClose, count: drawRes.polyCount, geom: drawRes.polyGeom }));
+check('★ 顶点不足 3 个时不落地残缺多边形',
+  drawRes.polyCountAfterTooFew === 1, String(drawRes.polyCountAfterTooFew));
+check('★ 退出绘制态后：光标还原、预览清空、监听解绑',
+  drawRes.activeAfterStop === false && drawRes.cursorAfterStop === '' &&
+  drawRes.previewAfterStop === false && drawRes.leakedListeners === false,
+  JSON.stringify({ active: drawRes.activeAfterStop, cursor: drawRes.cursorAfterStop,
+                   preview: drawRes.previewAfterStop, bound: drawRes.leakedListeners }));
+
+/* ═══ [20] 右栏分区折叠 + 图表操作 ═══ */
+console.log('\n[20] 右栏分区折叠与图表操作');
+await clearAdded();
+const panel = await ev(`(async () => {
+  localStorage.removeItem('wizdeck.insp.sections');
+  const out = {};
+  const head = (id) => document.querySelector('#' + id + ' .sec-head');
+  const body = (id) => document.querySelector('#' + id + ' .sec-body');
+  out.sections = Array.from(document.querySelectorAll('.insp-sec'))
+    .filter((s) => s.querySelector('.sec-head'))
+    .map((s) => ({ id: s.id, headTag: s.querySelector('.sec-head').tagName,
+                   expanded: s.querySelector('.sec-head').getAttribute('aria-expanded') }));
+
+  head('sec-layers').click();
+  await new Promise((r) => setTimeout(r, 120));
+  out.collapsed = { exp: head('sec-layers').getAttribute('aria-expanded'),
+                    hidden: body('sec-layers').hidden,
+                    display: getComputedStyle(body('sec-layers')).display,
+                    height: Math.round(body('sec-layers').getBoundingClientRect().height) };
+  out.saved = localStorage.getItem('wizdeck.insp.sections') || '';
+  head('sec-layers').click();
+  await new Promise((r) => setTimeout(r, 120));
+  out.reExpanded = { hidden: body('sec-layers').hidden, display: getComputedStyle(body('sec-layers')).display };
+
+  head('sec-element').click();
+  await new Promise((r) => setTimeout(r, 120));
+  WD.app._internal.clearSelection();
+  await new Promise((r) => setTimeout(r, 200));
+  WD.app._internal.addElement('rect');
+  await new Promise((r) => setTimeout(r, 320));
+  out.staysClosed = { exp: head('sec-element').getAttribute('aria-expanded'),
+                      hidden: body('sec-element').hidden };
+  head('sec-element').click();
+  return out;
+})()`);
+check('★ 每个分区标题都是可聚焦的按钮，并带 aria-expanded',
+  panel.sections.length >= 4 && panel.sections.every((s) => s.headTag === 'BUTTON' && s.expanded !== null),
+  JSON.stringify(panel.sections));
+check('★ 收起分区后内容真的不占位（display:none）',
+  panel.collapsed.exp === 'false' && panel.collapsed.hidden === true &&
+  panel.collapsed.display === 'none' && panel.collapsed.height === 0,
+  JSON.stringify(panel.collapsed));
+check('★ 折叠状态写入 localStorage（刷新后保持）',
+  /sec-layers/.test(panel.saved), panel.saved);
+check('★ 点第二次能展开回来',
+  panel.reExpanded.hidden === false && panel.reExpanded.display !== 'none', JSON.stringify(panel.reExpanded));
+check('★ 用户手动收起的分区，选中元素时不会被自动弹开',
+  panel.staysClosed.exp === 'false' && panel.staysClosed.hidden === true, JSON.stringify(panel.staysClosed));
+
+const chartOps = await ev(`(async () => {
+  const I = WD.app._internal;
+  I.clearSelection();
+  const img = I.addElement('bar');
+  await new Promise((r) => setTimeout(r, 500));
+  const dataOf = () => JSON.parse(img.getAttribute('data-wd-chart') || '{}');
+  const settle = () => new Promise((r) => setTimeout(r, 1300));
+  const typeOf = (i) => {
+    const s = document.querySelector('#chf-series .series-row[data-si="' + i + '"] [data-f="kind"]');
+    return s ? s.value : null;
+  };
+  const out = {
+    secShown: !document.getElementById('sec-chart').hidden,
+    secExpanded: document.querySelector('#sec-chart .sec-head').getAttribute('aria-expanded'),
+    before: dataOf().title,
+    seriesCount: dataOf().series.length,
+    catCount: dataOf().labels.length,
+  };
+
+  /* ① 逐系列切类型：前两个系列都改成折线 → 整张图变成折线图 */
+  document.querySelectorAll('#chf-series .series-row [data-f="kind"]').forEach((sel) => {
+    sel.value = 'chartline';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await settle();
+  const allLine = dataOf();
+  out.afterAllLine = {
+    kind: img.getAttribute('data-wd-chart-kind'),
+    added: img.getAttribute('data-wd-added'),
+    seriesKind: allLine.seriesKind,
+    type0: typeOf(0),
+  };
+
+  /* ② 只把第二个系列改回柱状 → 混合图：kind 回到 bar，但第一个系列仍是线 */
+  const sel1 = document.querySelector('#chf-series .series-row[data-si="1"] [data-f="kind"]');
+  sel1.value = 'bar';
+  sel1.dispatchEvent(new Event('change', { bubbles: true }));
+  await settle();
+  const mixed = dataOf();
+  out.afterMixed = { kind: img.getAttribute('data-wd-chart-kind'), seriesKind: mixed.seriesKind };
+
+  /* ③ 系列颜色：点一下应该开**色盘**（原生 input[type=color]），
+     Alt+点 才是沿色板轮换。
+     色盘是系统弹窗，测不了它本身，所以这里盯住「有没有去点那个 input」——
+     临时把该 input 的 click 换掉计数，再派发真正的鼠标事件。 */
+  const sw = document.querySelector('#chf-series .series-row[data-si="0"] .sw-series');
+  out.swBefore = sw.getAttribute('data-color');
+  out.pickerOpened = await (async () => {
+    const pick = sw.parentNode.querySelector('.sw-pick[data-f="stroke"]');
+    if (!pick) return 'no-picker';
+    const orig = pick.click;
+    let hit = 0, valAtClick = null;
+    pick.click = function () { hit++; valAtClick = pick.value; };
+    sw.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    pick.click = orig;
+    return { hit, valAtClick, swatch: sw.getAttribute('data-color') };
+  })();
+  await settle();
+  out.afterPicker = { color: dataOf().series[0].color,
+                      swatch: document.querySelector('#chf-series .series-row[data-si="0"] .sw-series').getAttribute('data-color') };
+  /* Alt+点 → 沿色板轮换 */
+  sw.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true }));
+  await settle();
+  out.afterAltCycle = { color: dataOf().series[0].color,
+                        swatch: document.querySelector('#chf-series .series-row[data-si="0"] .sw-series').getAttribute('data-color') };
+
+  /* ④ 加一个系列 */
+  document.getElementById('chf-add-series').click();
+  await settle();
+  out.afterAddSeries = { count: dataOf().series.length,
+                         rows: document.querySelectorAll('#chf-series .series-row').length,
+                         gridHeads: document.querySelectorAll('#chf-grid .chart-grid-head').length,
+                         vals: document.querySelectorAll('#chf-grid .grid-val').length };
+
+  /* ⑤ 加一个分类 */
+  document.getElementById('chf-add-cat').click();
+  await settle();
+  out.afterAddCat = { labels: dataOf().labels.length,
+                      keys: document.querySelectorAll('#chf-grid .grid-key').length,
+                      vals: document.querySelectorAll('#chf-grid .grid-val').length };
+
+  /* ⑥ 删除最后那个分类 */
+  const lastRowDel = Array.from(document.querySelectorAll('#chf-grid .chart-del')).pop();
+  lastRowDel.click();
+  await settle();
+  out.afterDelCat = { labels: dataOf().labels.length, keys: document.querySelectorAll('#chf-grid .grid-key').length };
+
+  /* ⑦ 删除刚加的那个系列 */
+  const lastSeriesDel = Array.from(document.querySelectorAll('#chf-series .chart-del')).pop();
+  lastSeriesDel.click();
+  await settle();
+  out.afterDelSeries = { count: dataOf().series.length,
+                         rows: document.querySelectorAll('#chf-series .series-row').length,
+                         gridHeads: document.querySelectorAll('#chf-grid .chart-grid-head').length };
+
+  /* ⑧ 背景色：默认无 → 选一个预设 → 选回无 */
+  out.bgDefault = dataOf().bgColor;
+  const bg = document.querySelector('#chf-bg .sw-bg');
+  out.bgPickColor = bg.getAttribute('data-color');
+  bg.click();
+  await settle();
+  out.bgAfterPick = dataOf().bgColor;
+  document.getElementById('chf-bg-none').click();
+  await settle();
+  out.bgAfterNone = dataOf().bgColor;
+
+  /* ⑨ 改标题仍即时生效 */
+  const t = document.getElementById('chf-title');
+  t.value = '折叠与图表联测';
+  t.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+  out.afterTitle = dataOf().title;
+  return out;
+})()`);
+check('★ 选中图表时图表段出现且自动展开',
+  chartOps.secShown === true && chartOps.secExpanded === 'true',
+  JSON.stringify({ shown: chartOps.secShown, exp: chartOps.secExpanded }));
+check('★ 逐系列切类型：全改成折线后整张图变折线（data-wd-chart-kind 一起走）',
+  chartOps.afterAllLine.kind === 'chartline' && chartOps.afterAllLine.added === 'chart-chartline' &&
+  JSON.stringify(chartOps.afterAllLine.seriesKind) === JSON.stringify(['chartline', 'chartline']) &&
+  chartOps.afterAllLine.type0 === 'chartline',
+  JSON.stringify(chartOps.afterAllLine));
+check('★ 混合图：一个系列折线 + 一个系列柱状时仍按柱状画布渲染',
+  chartOps.afterMixed.kind === 'bar' &&
+  JSON.stringify(chartOps.afterMixed.seriesKind) === JSON.stringify(['chartline', 'bar']),
+  JSON.stringify(chartOps.afterMixed));
+check('★ 点系列颜色格：开的是色盘（原生取色器），颜色不被悄悄改掉',
+  chartOps.pickerOpened && chartOps.pickerOpened.hit === 1 &&
+  chartOps.afterPicker.color === chartOps.swBefore,
+  JSON.stringify({ opened: chartOps.pickerOpened, before: chartOps.swBefore, after: chartOps.afterPicker }));
+check('★ Alt+点系列颜色格：沿色板轮换，图上的颜色与色格同步',
+  chartOps.afterAltCycle.color === chartOps.afterAltCycle.swatch &&
+  chartOps.afterAltCycle.color !== chartOps.swBefore,
+  JSON.stringify({ before: chartOps.swBefore, alt: chartOps.afterAltCycle }));
+check('★ 加一个系列：图上、系列行、数据网格表头与值格一起长出来',
+  chartOps.afterAddSeries.count === chartOps.seriesCount + 1 &&
+  chartOps.afterAddSeries.rows === chartOps.afterAddSeries.count &&
+  chartOps.afterAddSeries.gridHeads === chartOps.afterAddSeries.count &&
+  chartOps.afterAddSeries.vals === chartOps.afterAddSeries.count * chartOps.catCount,
+  JSON.stringify(chartOps.afterAddSeries) + ' cats=' + chartOps.catCount);
+check('★ 加一个分类：分类数 +1，网格多一行（值格 = 新行数 × 系列数）',
+  chartOps.afterAddCat.labels === chartOps.catCount + 1 &&
+  chartOps.afterAddCat.keys === chartOps.afterAddCat.labels &&
+  chartOps.afterAddCat.vals === chartOps.afterAddCat.keys * chartOps.afterAddSeries.count,
+  JSON.stringify(chartOps.afterAddCat));
+check('★ 删一个分类：分类数与网格行一起减回去',
+  chartOps.afterDelCat.labels === chartOps.catCount &&
+  chartOps.afterDelCat.keys === chartOps.catCount,
+  JSON.stringify(chartOps.afterDelCat));
+check('★ 删一个系列：图上与网格表头一起收回',
+  chartOps.afterDelSeries.count === chartOps.seriesCount &&
+  chartOps.afterDelSeries.rows === chartOps.seriesCount &&
+  chartOps.afterDelSeries.gridHeads === chartOps.seriesCount,
+  JSON.stringify(chartOps.afterDelSeries));
+check('★ 背景色：默认无 → 选预设色生效 → 选「无」回到透明',
+  chartOps.bgDefault === '' && chartOps.bgAfterPick === chartOps.bgPickColor && chartOps.bgAfterNone === '',
+  JSON.stringify({ def: chartOps.bgDefault, pick: chartOps.bgPickColor,
+                   after: chartOps.bgAfterPick, none: chartOps.bgAfterNone }));
+check('★ 改标题仍然即时生效（原有能力没被这次改造破坏）',
+  chartOps.afterTitle === '折叠与图表联测', String(chartOps.afterTitle));
 
 console.log('\n通过 ' + pass + '  失败 ' + fail);
 if (failures.length) failures.forEach((f) => console.log('  - ' + f));

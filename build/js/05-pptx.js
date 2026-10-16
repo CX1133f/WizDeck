@@ -408,9 +408,12 @@
       if (/url\(/i.test(bgImg)) {
         var layers = splitTopLevel(bgImg, ',');
         if (layers.length > 1) reasons.push('multi-bg');
-        if (/cover|contain/i.test(cs.backgroundSize || '') || U.parsePx(cs.borderTopLeftRadius, 0) > 0) {
-          reasons.push('bg-fit');
-        }
+        /* 平铺与圆角裁切没法用「一张图片形状」还原，交给贴图。
+           其余情况（含 cover / contain / 定位偏移）走矢量图片 + srcRect 裁切：
+           既保住清晰度，也不会把元素里的文字一起烘成位图。 */
+        var rep = (cs.backgroundRepeat || '').toLowerCase();
+        if (rep && rep !== 'no-repeat') reasons.push('bg-repeat');
+        if (U.parsePx(cs.borderTopLeftRadius, 0) > 0) reasons.push('bg-radius');
       }
     }
     if (cs.filter && cs.filter !== 'none') reasons.push('filter');
@@ -532,6 +535,22 @@
       }
       for (var i = 0; i < node.children.length; i++) visit(node.children[i]);
     }
+
+    /* 根节点自己也要收进来：整页的背景图 / 渐变 / 底色常常就挂在 [data-wd-root] 或 body 上，
+       只遍历 children 会让它凭空消失。标记 bgOnly，表示「只画它自己的背景，
+       子元素照旧逐个矢量化」—— 绝不能把根节点当复杂元素整页栅格化，否则全篇文字变成一张图。 */
+    (function () {
+      var rcs;
+      try { rcs = win.getComputedStyle(root); } catch (e) { return; }
+      if (!rcs || rcs.display === 'none' || rcs.visibility === 'hidden') return;
+      var rbgImg = rcs.backgroundImage && rcs.backgroundImage !== 'none';
+      var rbgColor = U.isVisibleColor(U.parseColor(rcs.backgroundColor));
+      if (!rbgImg && !rbgColor) return;
+      out.unshift({
+        node: root, cs: rcs, box: { x: 0, y: 0, w: W, h: H }, tag: root.tagName.toLowerCase(),
+        reasons: [], bgImage: rbgImg, bgColor: rbgColor, border: { any: false }, bgOnly: true
+      });
+    })();
 
     for (var k = 0; k < root.children.length; k++) visit(root.children[k]);
     return out;
@@ -732,6 +751,138 @@
       '</p:spPr></p:pic>';
   }
 
+  /* ── CSS 背景图 → PPTX 图片形状 ───────────────────────────────────────
+     CSS 那边有 background-size / -position / -origin / -clip 四个自由度，
+     PPTX 这边只有「外框矩形 + srcRect 源裁切」。所以要先算出浏览器真正把图片
+     画在了哪块矩形上，再把落在可见区之外的部分换算成裁切比例。
+     过去这类背景图只在 cover/contain 时被整块栅格化，其余情况直接消失。 */
+
+  function bgDataUrl(cs) {
+    var bi = cs && cs.backgroundImage;
+    if (!bi || bi === 'none' || !/url\(/i.test(bi)) return '';
+    if (splitTopLevel(bi, ',').length > 1) return '';   /* 多层背景交给贴图 */
+    var m = /url\(\s*(['"]?)([^'")]*)\1\s*\)/.exec(bi);
+    var u = m ? m[2] : '';
+    return /^data:/i.test(u) ? u : '';
+  }
+
+  function boxInsetBy(cs, box, which) {
+    var b = { x: box.x, y: box.y, w: box.w, h: box.h };
+    var props = which === 'content'
+      ? [['borderLeftWidth', 'paddingLeft'], ['borderTopWidth', 'paddingTop'],
+         ['borderRightWidth', 'paddingRight'], ['borderBottomWidth', 'paddingBottom']]
+      : [['borderLeftWidth'], ['borderTopWidth'], ['borderRightWidth'], ['borderBottomWidth']];
+    var l = 0, t = 0, r = 0, bt = 0;
+    props.forEach(function (p, i) {
+      var v = 0;
+      p.forEach(function (k) { v += U.parsePx(cs[k], 0) || 0; });
+      if (i === 0) l = v; else if (i === 1) t = v; else if (i === 2) r = v; else bt = v;
+    });
+    b.x += l; b.y += t;
+    b.w = Math.max(0, b.w - l - r);
+    b.h = Math.max(0, b.h - t - bt);
+    return b;
+  }
+
+  function bgKeyword(v, isStart) {
+    switch (String(v || '').toLowerCase()) {
+      case 'left': case 'top': return '0%';
+      case 'right': case 'bottom': return '100%';
+      case 'center': return '50%';
+      default: return v || (isStart ? '0%' : '50%');
+    }
+  }
+
+  function bgDrawnSize(cs, ref, natW, natH) {
+    var bs = String(cs.backgroundSize || 'auto').trim().toLowerCase();
+    if (!bs || bs === 'auto') return { w: natW, h: natH };
+    if (/^cover/.test(bs)) {
+      var s = Math.max(ref.w / natW, ref.h / natH);
+      return { w: natW * s, h: natH * s };
+    }
+    if (/^contain/.test(bs)) {
+      var s2 = Math.min(ref.w / natW, ref.h / natH);
+      return { w: natW * s2, h: natH * s2 };
+    }
+    function dim(v, base) {
+      if (!v || v === 'auto') return null;
+      if (/%$/.test(v)) { var f = parseFloat(v); return isNaN(f) ? null : base * f / 100; }
+      var px = U.parsePx(v, NaN);
+      return (px === null || isNaN(px)) ? null : px;
+    }
+    var parts = bs.split(/\s+/);
+    var w = dim(parts[0], ref.w);
+    var h = parts.length > 1 ? dim(parts[1], ref.h) : null;
+    if (w === null && h === null) return { w: natW, h: natH };
+    if (w === null) w = natW * h / natH;
+    if (h === null) h = natH * w / natW;
+    return { w: w, h: h };
+  }
+
+  function bgPlacement(cs, box, natW, natH) {
+    if (!natW || !natH || box.w < 0.5 || box.h < 0.5) return null;
+    var origin = (cs.backgroundOrigin || 'padding-box').toLowerCase();
+    var ref = origin === 'border-box' ? box
+      : boxInsetBy(cs, box, origin === 'content-box' ? 'content' : 'padding');
+    var clipProp = (cs.backgroundClip || 'border-box').toLowerCase();
+    var clip = clipProp === 'border-box' ? box
+      : boxInsetBy(cs, box, clipProp === 'content-box' ? 'content' : 'padding');
+    if (ref.w < 0.5 || ref.h < 0.5 || clip.w < 0.5 || clip.h < 0.5) return null;
+
+    var d = bgDrawnSize(cs, ref, natW, natH);
+    if (!(d.w > 0) || !(d.h > 0)) return null;
+
+    var bp = String(cs.backgroundPosition || '0% 0%').trim().split(/\s+/);
+    function off(v, base, drawn) {
+      if (/%$/.test(v)) { var f = parseFloat(v); return isNaN(f) ? 0 : (base - drawn) * f / 100; }
+      var px = U.parsePx(v, NaN);
+      return (px === null || isNaN(px)) ? 0 : px;
+    }
+    var ox = off(bgKeyword(bp[0], true), ref.w, d.w);
+    var oy = off(bgKeyword(bp[1], false), ref.h, d.h);
+
+    var x = ref.x + ox, y = ref.y + oy;
+    var ix = Math.max(x, clip.x), iy = Math.max(y, clip.y);
+    var ix2 = Math.min(x + d.w, clip.x + clip.w), iy2 = Math.min(y + d.h, clip.y + clip.h);
+    if (ix2 - ix < 0.5 || iy2 - iy < 0.5) return null;
+
+    function thou(v) { return Math.round(U.clamp(v, 0, 1) * 100000); }
+    return {
+      x: ix, y: iy, w: ix2 - ix, h: iy2 - iy,
+      src: {
+        l: thou((ix - x) / d.w), t: thou((iy - y) / d.h),
+        r: thou((x + d.w - ix2) / d.w), b: thou((y + d.h - iy2) / d.h)
+      }
+    };
+  }
+
+  function bgPictureXml(id, name, p, relId) {
+    var s = p.src;
+    return '<p:pic><p:nvPicPr><p:cNvPr id="' + id + '" name="' + U.escapeXml(name) + '"/>' +
+      '<p:cNvPicPr><a:picLocks/></p:cNvPicPr><p:nvPr/></p:nvPicPr>' +
+      '<p:blipFill><a:blip r:embed="' + relId + '"/>' +
+      '<a:srcRect l="' + s.l + '" t="' + s.t + '" r="' + s.r + '" b="' + s.b + '"/>' +
+      '<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>' +
+      xfrmXml(p.x, p.y, p.w, p.h) + prstGeom('rect') +
+      '</p:spPr></p:pic>';
+  }
+
+  /* 背景图裁切要用到图片原始尺寸，统一预取一次（同一张图只取一次） */
+  function prefetchBgSizes(items) {
+    var urls = [], seen = Object.create(null);
+    items.forEach(function (item) {
+      var u = bgDataUrl(item.cs);
+      if (u && !seen[u]) { seen[u] = true; urls.push(u); }
+    });
+    var out = Object.create(null);
+    if (!urls.length) return Promise.resolve(out);
+    return Promise.all(urls.map(function (u) {
+      return WD.render.prefetchImage(u).then(function (img) {
+        out[u] = { w: img.naturalWidth || img.width || 0, h: img.naturalHeight || img.height || 0 };
+      }, function () { out[u] = null; });
+    })).then(function () { return out; });
+  }
+
   /* 文本框：每行一个 <a:p>，位置和断行都按浏览器实测结果摆放。
      但 bodyPr 必须允许换行（wrap="square"），不能用 wrap="none"：
      演示电脑上若缺少设计字体，字体度量变化会让文字变宽，wrap="none" 会把整行推出画面，
@@ -819,8 +970,74 @@
        ⑥ 剩下的纯色块 / 边框 / data-URI 图片 / 文字 → 真正的矢量对象。
      ══════════════════════════════════════════════════════════════════════ */
 
-  function buildSlide(slide, ctx, opts) {
+  /* 导出前把这一页里「还没变成 data: 的图片」补内联一遍，覆盖两类：
+       · <img> 的 src
+       · 任意元素的 background-image: url(...)（页面背景图就是走这条）
+       为什么必须做：PPTX 只能嵌字节，而且 foreignObject 栅格化压根加载不了外部资源。
+       导入 HTML 时若资源内联失败（外链、CORS、file://），不补这一步图片和背景图
+       会在导出产物里凭空消失 —— 而且过去是静默消失。 */
+  function inlineSlideImages(doc, note) {
+    var win = doc.defaultView;
+    var jobs = [];
+    Array.prototype.forEach.call(doc.querySelectorAll('img'), function (n) {
+      var src = n.currentSrc || n.src || n.getAttribute('src') || '';
+      if (src && !/^data:/i.test(src)) jobs.push({ url: src, kind: 'img', node: n });
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll('*'), function (n) {
+      var cs;
+      try { cs = win && win.getComputedStyle(n); } catch (e) { return; }
+      if (!cs) return;
+      var bi = cs.backgroundImage || '';
+      if (bi === 'none' || !/url\(/i.test(bi)) return;
+      var m = /url\(\s*(['"]?)([^'")]*)\1\s*\)/.exec(bi);
+      if (!m) return;
+      var u = m[2];
+      if (!u || /^data:/i.test(u)) return;
+      jobs.push({ url: u, kind: 'bg', node: n, full: m[0], bi: bi });
+    });
+    if (!jobs.length) return Promise.resolve();
+    var changed = [];
+    return Promise.all(jobs.map(function (j) {
+      return WD.parse.fetchAsDataUrl(j.url).then(function (d) {
+        if (!d || !/^data:/i.test(d)) return false;
+        /* 替换串用函数返回，避免 dataURL 里偶发的 $ 被当成 replace 的模式符 */
+        if (j.kind === 'img') { j.node.src = d; changed.push(j.node); }
+        else j.node.style.backgroundImage = j.bi.replace(j.full, function () { return 'url("' + d + '")'; });
+        return true;
+      }, function () { return false; });
+    })).then(function (oks) {
+      /* 逐条报出到底哪个资源没拿到：只说「有几处失败」用户没法排查 */
+      var bad = [];
+      oks.forEach(function (o, i) { if (!o) bad.push(jobs[i]); });
+      if (bad.length && typeof note === 'function') {
+        bad.slice(0, 5).forEach(function (j) {
+          note((j.kind === 'img' ? '图片' : '背景图') + '无法内联，导出产物里会缺失：' +
+            String(j.url).slice(0, 60));
+        });
+        if (bad.length > 5) note('另有 ' + (bad.length - 5) + ' 处图片/背景图同样无法内联');
+      }
+      /* 刚换上的 data: 还没解码完就去栅格化会画成空白，这里等它们真的就绪 */
+      return waitForImages(changed);
+    });
+  }
+
+  /* 故意不用 rAF：后台标签页里 requestAnimationFrame 压根不触发，会把整条导出链拖死 */
+  function waitForImages(nodes) {
+    var pending = nodes.filter(function (n) { return n && !n.complete; });
+    if (!pending.length) return Promise.resolve();
+    return Promise.all(pending.map(function (n) {
+      return new Promise(function (res) {
+        var t = setTimeout(res, 6000);
+        n.addEventListener('load', function () { clearTimeout(t); res(); }, { once: true });
+        n.addEventListener('error', function () { clearTimeout(t); res(); }, { once: true });
+      });
+    })).then(function () { /* ignore */ });
+  }
+
+  function buildSlide(slide, ctx, opts, warn) {
+    function note(msg) { if (typeof warn === 'function') warn(msg); }
     return WD.render.mountFrame(slide.doc, { timeout: 25000 })
+      .then(function (m) { return inlineSlideImages(m.doc, note).then(function () { return m; }); })
       .then(function (m) {
         var doc = m.doc, win = m.win;
         var paintBoxes = collectPaintBoxes(doc, win);
@@ -842,9 +1059,10 @@
           return covered.some(function (t) { return rectsOverlap(c.box, t.box); });
         });
 
+        var regionOk = false;
         var coveredPromise = occluders.length
           ? coveredRegionPicture(m, occluders, covered, ctx).then(function (r) {
-              if (r) { shapes.push(r.xml); rels.push(r.rel); }
+              if (r) { shapes.push(r.xml); rels.push(r.rel); regionOk = true; }
             })
           : Promise.resolve();
 
@@ -859,45 +1077,92 @@
         }).then(function () {
           var skipSubtree = new Set();
           toRaster.forEach(function (c) { markSubtree(c.node, skipSubtree); });
+          /* 并进遮挡区域贴图的元素同样已经画过了；但贴图失败时不能跳，否则内容彻底丢失 */
+          if (regionOk) occluders.forEach(function (c) { markSubtree(c.node, skipSubtree); });
 
-          /* ⑥-a 形状层 */
-          paintBoxes.forEach(function (item) {
-            if (item.reasons && item.reasons.length) return;
-            if (skipSubtree.has(item.node)) return;
-            if (item.tag === 'img') {
-              var src = item.node.currentSrc || item.node.src || item.node.getAttribute('src') || '';
-              if (!/^data:/.test(src)) return;
-              var parsed = U.dataUrlToBytes(src);
-              if (!parsed) return;
-              var name = ctx.addMedia(parsed.bytes, parsed.mime);
-              var relId = 'rIdImg' + ctx.mediaIndex;
-              shapes.push(pictureXml(nextId(), U.describeElement(item.node), item.box, relId,
-                rotationOf(item.cs)));
-              rels.push({ id: relId, name: name });
-              return;
-            }
-            var bg = U.parseColor(item.cs.backgroundColor);
-            var fillXml = U.isVisibleColor(bg) ? solidFill(bg) : noFill();
-            var bd = item.border;
-            var line = bd.any ? lineXml(bd.color, bd.width, bd.style) : noLine();
-            shapes.push(rectShapeXml(nextId(), U.describeElement(item.node), item.box, fillXml, line, {
-              adj: radiusToAdj(item.cs, item.box.w, item.box.h),
-              shadow: item.cs.boxShadow,
-              rot: rotationOf(item.cs)
-            }));
+          return prefetchBgSizes(paintBoxes).then(function (bgSizes) {
+            /* ⑥-a 形状层 */
+            paintBoxes.forEach(function (item) {
+              if (item.reasons && item.reasons.length) return;
+              if (skipSubtree.has(item.node)) return;
+              var elName = U.describeElement(item.node);
+              if (item.tag === 'img') {
+                var src = item.node.currentSrc || item.node.src || item.node.getAttribute('src') || '';
+                if (!/^data:/i.test(src)) {
+                  /* 到这里说明 inlineSlideImages 已经试过并且失败，那边已经报过具体地址了 */
+                  return;
+                }
+                var parsed = U.dataUrlToBytes(src);
+                if (!parsed) { note('一张图片的数据无法解析，导出中已跳过'); return; }
+                var name = ctx.addMedia(parsed.bytes, parsed.mime);
+                var relId = 'rIdImg' + ctx.mediaIndex;
+                shapes.push(pictureXml(nextId(), elName, item.box, relId,
+                  rotationOf(item.cs)));
+                rels.push({ id: relId, name: name });
+                return;
+              }
+
+              /* 背景图：单独出一张图片形状，元素里的文字仍然是可编辑文本 */
+              var bgu = bgDataUrl(item.cs);
+              var bgPic = null;
+              if (bgu) {
+                var bytes = U.dataUrlToBytes(bgu);
+                if (!bytes) {
+                  note('一处背景图的数据无法解析，导出中已跳过');
+                } else {
+                  var nat = bgSizes[bgu];
+                  var p = nat ? bgPlacement(item.cs, item.box, nat.w, nat.h) : null;
+                  if (!p) {
+                    /* 尺寸取不到时退化为「拉伸铺满」，至少不会整块消失 */
+                    p = { x: item.box.x, y: item.box.y, w: item.box.w, h: item.box.h,
+                          src: { l: 0, t: 0, r: 0, b: 0 } };
+                  }
+                  var bgName = ctx.addMedia(bytes.bytes, bytes.mime);
+                  var bgRelId = 'rIdImg' + ctx.mediaIndex;
+                  bgPic = { xml: bgPictureXml(nextId(), elName + ' 背景图', p, bgRelId),
+                            rel: { id: bgRelId, name: bgName } };
+                }
+              }
+
+              var bg = U.parseColor(item.cs.backgroundColor);
+              var bd = item.border;
+              var adj = radiusToAdj(item.cs, item.box.w, item.box.h);
+              var rot = rotationOf(item.cs);
+              if (bgPic) {
+                /* 底色 → 背景图 → 描边，三层顺序和浏览器绘制顺序一致 */
+                if (U.isVisibleColor(bg)) {
+                  shapes.push(rectShapeXml(nextId(), elName, item.box, solidFill(bg), noLine(),
+                    { adj: adj, shadow: item.cs.boxShadow, rot: rot }));
+                }
+                shapes.push(bgPic.xml);
+                rels.push(bgPic.rel);
+                if (bd.any) {
+                  shapes.push(rectShapeXml(nextId(), elName, item.box, noFill(),
+                    lineXml(bd.color, bd.width, bd.style), { adj: adj, rot: rot }));
+                }
+                return;
+              }
+
+              var fillXml = U.isVisibleColor(bg) ? solidFill(bg) : noFill();
+              var line = bd.any ? lineXml(bd.color, bd.width, bd.style) : noLine();
+              shapes.push(rectShapeXml(nextId(), elName, item.box, fillXml, line, {
+                adj: adj,
+                shadow: item.cs.boxShadow,
+                rot: rot
+              }));
+            });
+
+            /* ⑥-b 文字层 */
+            textBlocks.forEach(function (block) {
+              if (coveredSet.has(block.node)) return;
+              if (skipSubtree.has(block.node)) return;
+              buildTextShapes(block).forEach(function (x) { shapes.push(x); });
+            });
+
+            var bgXml = backgroundShapeXml(pageBackground(doc, win));
+            m.frame.remove();
+            return { xml: slideXml(bgXml + shapes.join(''), ''), rels: rels, notes: slide.notes || '' };
           });
-
-          /* ⑥-b 文字层 */
-          textBlocks.forEach(function (block) {
-            if (coveredSet.has(block.node)) return;
-            if (skipSubtree.has(block.node)) return;
-            if (complex.indexOf(block) >= 0) return;
-            buildTextShapes(block).forEach(function (x) { shapes.push(x); });
-          });
-
-          var bgXml = backgroundShapeXml(pageBackground(doc, win));
-          m.frame.remove();
-          return { xml: slideXml(bgXml + shapes.join(''), ''), rels: rels, notes: slide.notes || '' };
         });
       });
   }
@@ -988,9 +1253,12 @@
     });
   }
 
+  /* 已经烘进贴图的元素：自己 + 全部后代都要跳过。
+     漏掉「自己」会让同一个元素既出现在图片里、又再输出一份矢量形状和文字，
+     导出后看起来就是重影 / 文字发虚。 */
   function markSubtree(node, set) {
+    set.add(node);
     for (var i = 0; i < node.children.length; i++) {
-      set.add(node.children[i]);
       markSubtree(node.children[i], set);
     }
   }

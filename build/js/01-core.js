@@ -350,9 +350,34 @@
     return s;
   }
 
+  /* WizDeck 自己插入的元素：报它在应用里的名字，而不是 div / img。
+     否则检查器顶部与状态栏会把「自由绘制」显示成「容器」、
+     把「折线图」显示成「图片」—— 用户根本对不上自己刚插的是什么。 */
+  var ADDED_NAMES = {
+    drawn: '自由绘制', poly: '多边形',
+    curve: '曲线', connector: '连接线', connectorcurve: '曲线连接线',
+    line: '直线', arrow: '箭头', dblarrow: '双向箭头',
+    rect: '矩形', round: '圆角矩形', circle: '圆形', oval: '椭圆',
+    triangle: '三角形', para: '平行四边形',
+    table: '表格', formula: '公式',
+    bar: '柱状图', chartline: '折线图', pie: '饼状图',
+    text: '文本框', textv: '竖向文本框',
+    title1: '一级标题', title2: '二级标题', title3: '三级标题', title4: '四级标题',
+  };
+
   function describeElement(node) {
     if (!isElement(node)) return '';
     var tag = node.tagName.toLowerCase();
+    /* 自插元素优先。图表是 <img data-wd-added="chart-line">，所以再看一眼图表类型 */
+    var added = node.getAttribute ? node.getAttribute('data-wd-added') : null;
+    if (added) {
+      if (ADDED_NAMES[added]) return ADDED_NAMES[added];
+      var ck = node.getAttribute('data-wd-chart-kind');
+      if (ck) return ({ bar: '柱状图', chartline: '折线图', pie: '饼状图' })[ck] || '图表';
+      if (/^chart-/.test(added)) return '图表';
+      if (added === 'image') return '图片';
+      if (added === 'video') return '视频';
+    }
     var FRIENDLY = {
       h1: '大标题', h2: '标题', h3: '小标题', h4: '小标题', h5: '小标题', h6: '小标题',
       p: '段落', div: '容器', span: '文本', section: '区块', article: '区块',

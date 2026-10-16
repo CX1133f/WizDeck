@@ -18,7 +18,7 @@ $tests = @(
   @{ n = 'panel-test.mjs';   t = 'panel collapse / expand' },
   @{ n = 'topbar-test.mjs';  t = 'topbar flat buttons + icons' },
   @{ n = 'video-test.mjs';   t = 'insert video + poster fallback' },
-  @{ n = 'ovbar-test.mjs';   t = 'selection toolbar icon size / counter-scale' },
+  @{ n = 'overlay-test.mjs'; t = 'selection overlay: zero occlusion + shortcut parity' },
   @{ n = 'latex-test.mjs';   t = 'latex to mathml parser'; browser = $false },
   @{ n = 'elements-test.mjs'; t = 'shapes / titles / text / table / formula / chart' },
   @{ n = 'ui-smoke.mjs';     t = 'workbench shell smoke (topbar/panels/find/painter)' },

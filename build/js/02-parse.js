@@ -591,7 +591,10 @@
   var PROJECT_OPEN = '<script type="application/wizdeck+json" id="wizdeck-doc">';
   var PROJECT_CLOSE = '<\/script>';
 
-  function serializeProject(model) {
+  /* 工程 JSON 区块 —— 全工程只有这一处生成它。
+     type 不是 javascript，浏览器当数据块不执行；WizDeck 靠它无损还原全部页面。
+     「保存」与「导出为 HTML」共用这一块，避免同一份课件在文件里存两遍。 */
+  function projectJson(model) {
     var payload = {
       format: 'wizdeck',
       version: 1,
@@ -606,7 +609,10 @@
       })
     };
     /* JSON 里的 "<" 全部转义，避免提前闭合 script 标签 */
-    var json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    return PROJECT_OPEN + JSON.stringify(payload).replace(/</g, '\\u003c') + PROJECT_CLOSE;
+  }
+
+  function serializeProject(model) {
     return '<!--\n  WizDeck 工程文件 / WizDeck project file\n' +
       '  用「智演引擎 WizDeck」打开即可继续编辑，也可以直接当普通 HTML 预览。\n' +
       '  下面 id="wizdeck-doc" 的区块内是可读 JSON（所有 "<" 已转义为 \\u003c）。\n-->\n' +
@@ -615,7 +621,7 @@
       '<title>' + U.escapeHtml(model.title || 'WizDeck 工程') + '</title>\n' +
       '</head>\n<body>\n' +
       '<div id="wizdeck-runner" data-wd-skip></div>\n' +
-      PROJECT_OPEN + json + PROJECT_CLOSE + '\n' +
+      projectJson(model) + '\n' +
       '<script data-wd-skip>\n' +
       '/* 直接用浏览器打开时的简易翻页预览；在 WizDeck 里打开则进入完整编辑。 */\n' +
       '(function(){var d=document.getElementById("wizdeck-doc");if(!d)return;' +
@@ -629,6 +635,30 @@
       'r.addEventListener("click",function(){go(i+1)});go(0);})();\n' +
       '<\/script>\n' +
       '</body>\n</html>\n';
+  }
+
+  /* 兼容层：早期「导出为 HTML」的放映页把全部页只存在脚本里的 var PAGES=[...] 数组中，
+     没有 wizdeck-doc 工程区块。这种文件直接走 loadHtml 只能量到 1 页（body 里就一个
+     iframe + 翻页条），所以先把那段数组抠出来，还原成完整多页deck。
+     数组元素是 JSON.stringify 后再把 < 转成 \u003c 的字面量，JSON.parse 能直接吃。 */
+  function parseLegacyViewer(text) {
+    var m = String(text || '').match(/var\s+PAGES\s*=\s*(\[[\s\S]*?\])\s*;\s*\n?\s*var\s+W\s*=/);
+    if (!m) return null;
+    var arr;
+    try { arr = JSON.parse(m[1]); } catch (e) { return null; }
+    if (!Array.isArray(arr) || arr.length < 2) return null;
+    var tm = String(text).match(/<title>([\s\S]*?)<\/title>/i);
+    return {
+      title: (tm && tm[1] ? tm[1].replace(/&amp;/g, '&').trim() : '') || '未命名演示',
+      style: '',
+      slides: arr.map(function (doc, i) {
+        var d = typeof doc === 'string' ? doc : '';
+        return {
+          id: U.uid('slide'), name: '第 ' + (i + 1) + ' 页', title: '第 ' + (i + 1) + ' 页',
+          layout: i === 0 ? 'title' : 'content', notes: '', doc: d
+        };
+      })
+    };
   }
 
   function parseProject(text) {
@@ -697,7 +727,9 @@
     applyAssetMap: applyAssetMap,
     fetchAsDataUrl: fetchAsDataUrl,
     serializeProject: serializeProject,
+    projectJson: projectJson,
     parseProject: parseProject,
+    parseLegacyViewer: parseLegacyViewer,
     looksLikeProject: looksLikeProject,
     guessSlideTitle: guessSlideTitle,
     STAGE_BASE_CSS: STAGE_BASE_CSS
